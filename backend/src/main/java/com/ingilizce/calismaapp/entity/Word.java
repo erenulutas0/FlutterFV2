@@ -7,12 +7,21 @@ import java.util.List;
 import java.util.ArrayList;
 
 @Entity
-@Table(name = "words")
+@Table(name = "words", indexes = {
+        @Index(name = "idx_word_user", columnList = "user_id"),
+        @Index(name = "idx_word_english", columnList = "english_word"), // Optimized Search
+        @Index(name = "idx_word_user_srs", columnList = "user_id, next_review_date")
+}, uniqueConstraints = {
+        @UniqueConstraint(columnNames = { "user_id", "english_word" }) // Prevent duplicates for same user
+})
 public class Word {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(name = "user_id", nullable = false)
+    private Long userId = 1L; // Default for backward compatibility
 
     @Column(nullable = false)
     private String englishWord;
@@ -63,6 +72,14 @@ public class Word {
 
     public void setId(Long id) {
         this.id = id;
+    }
+
+    public Long getUserId() {
+        return userId;
+    }
+
+    public void setUserId(Long userId) {
+        this.userId = userId;
     }
 
     public String getEnglishWord() {

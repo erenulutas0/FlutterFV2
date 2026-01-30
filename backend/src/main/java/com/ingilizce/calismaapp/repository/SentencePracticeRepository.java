@@ -11,24 +11,29 @@ import java.util.List;
 
 @Repository
 public interface SentencePracticeRepository extends JpaRepository<SentencePractice, Long> {
-    
-    // Find all sentences ordered by creation date
+
+    // Global support (Admin/Legacy)
     List<SentencePractice> findAllByOrderByCreatedDateDesc();
-    
-    // Find sentences by difficulty level
-    List<SentencePractice> findByDifficultyOrderByCreatedDateDesc(SentencePractice.DifficultyLevel difficulty);
-    
-    // Find sentences by date range
-    @Query("SELECT sp FROM SentencePractice sp WHERE sp.createdDate BETWEEN :startDate AND :endDate ORDER BY sp.createdDate DESC")
-    List<SentencePractice> findByDateRange(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
-    
-    // Find sentences by specific date
-    List<SentencePractice> findByCreatedDateOrderByCreatedDateDesc(LocalDate date);
-    
-    // Count sentences by difficulty
-    long countByDifficulty(SentencePractice.DifficultyLevel difficulty);
-    
-    // Get all distinct dates when sentences were created
-    @Query("SELECT DISTINCT sp.createdDate FROM SentencePractice sp ORDER BY sp.createdDate DESC")
-    List<LocalDate> findDistinctCreatedDates();
+
+    // User Scoped Methods
+    List<SentencePractice> findByUserIdOrderByCreatedDateDesc(Long userId);
+
+    // Find sentences by difficulty level (User Scoped)
+    List<SentencePractice> findByUserIdAndDifficultyOrderByCreatedDateDesc(Long userId,
+            SentencePractice.DifficultyLevel difficulty);
+
+    // Find sentences by date range (User Scoped)
+    @Query("SELECT sp FROM SentencePractice sp WHERE sp.userId = :userId AND sp.createdDate BETWEEN :startDate AND :endDate ORDER BY sp.createdDate DESC")
+    List<SentencePractice> findByUserIdAndDateRange(@Param("userId") Long userId,
+            @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+
+    // Find sentences by specific date (User Scoped)
+    List<SentencePractice> findByUserIdAndCreatedDateOrderByCreatedDateDesc(Long userId, LocalDate date);
+
+    // Count sentences by difficulty (User Scoped)
+    long countByUserIdAndDifficulty(Long userId, SentencePractice.DifficultyLevel difficulty);
+
+    // Get all distinct dates when sentences were created (User Scoped)
+    @Query("SELECT DISTINCT sp.createdDate FROM SentencePractice sp WHERE sp.userId = :userId ORDER BY sp.createdDate DESC")
+    List<LocalDate> findDistinctCreatedDatesByUserId(@Param("userId") Long userId);
 }

@@ -13,7 +13,7 @@ import '../services/user_data_service.dart';
 import '../services/api_key_manager.dart';
 import '../services/groq_api_client.dart';
 import '../providers/app_state_provider.dart';
-import 'auth_screen.dart';
+import 'login_page.dart';
 import '../widgets/modern_card.dart';
 import '../widgets/modern_background.dart';
 
@@ -406,12 +406,12 @@ class _ProfilePageState extends State<ProfilePage> {
 
     if (confirmed == true) {
       await AuthService().logout();
-      if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => const AuthScreen()),
-          (route) => false,
-        );
-      }
+        if (mounted) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (context) => const LoginPage()),
+            (route) => false,
+          );
+        }
     }
   }
 

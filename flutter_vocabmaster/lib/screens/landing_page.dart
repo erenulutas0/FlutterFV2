@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import '../main.dart'; // Import MainScreen
+import 'login_page.dart'; // Import LoginPage
 import '../widgets/modern_card.dart';
 import '../widgets/modern_background.dart';
 
@@ -645,10 +646,10 @@ class _LandingPageState extends State<LandingPage> with TickerProviderStateMixin
         await prefs.setBool('onboardingCompleted', true);
         
         if (mounted) {
-          // Navigate to MainScreen
+          // Navigate to LoginPage
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => const MainScreen()),
+            MaterialPageRoute(builder: (context) => const LoginPage()),
           );
         }
       },

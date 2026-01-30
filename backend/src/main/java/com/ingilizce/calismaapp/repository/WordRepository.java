@@ -12,15 +12,32 @@ import java.util.List;
 @Repository
 public interface WordRepository extends JpaRepository<Word, Long> {
 
+    // Legacy support (Admin/Global) or migration
     List<Word> findByLearnedDate(LocalDate date);
 
+    // User Scoped Methods
+    List<Word> findByUserId(Long userId);
+
+    List<Word> findByUserIdAndLearnedDate(Long userId, LocalDate date);
+
+    @Query("SELECT w FROM Word w WHERE w.userId = :userId AND w.learnedDate BETWEEN :startDate AND :endDate ORDER BY w.learnedDate DESC")
+    List<Word> findByUserIdAndDateRange(@Param("userId") Long userId, @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate);
+
+    // Kept for backward compatibility but should be replaced
     @Query("SELECT w FROM Word w WHERE w.learnedDate BETWEEN :startDate AND :endDate ORDER BY w.learnedDate DESC")
     List<Word> findByDateRange(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+
+    @Query("SELECT DISTINCT w.learnedDate FROM Word w WHERE w.userId = :userId ORDER BY w.learnedDate DESC")
+    List<LocalDate> findDistinctDatesByUserId(@Param("userId") Long userId);
 
     @Query("SELECT DISTINCT w.learnedDate FROM Word w ORDER BY w.learnedDate DESC")
     List<LocalDate> findAllDistinctDates();
 
-    // SRS Queries
+    // SRS Queries - User Scoped
+    List<Word> findByUserIdAndNextReviewDateLessThanEqual(Long userId, LocalDate date);
+
+    // Legacy SRS
     List<Word> findByNextReviewDateLessThanEqual(LocalDate date);
 
     List<Word> findByReviewCountGreaterThan(int count);

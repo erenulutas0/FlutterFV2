@@ -33,5 +33,30 @@ android/local.properties
 node_modules/
 npm-debug.log
 
+# Java / Maven
+**/target/
+.mvn/
+*.jar
+*.war
+*.ear
+
 # Environment Variables
 .env
+
+# Large binary files and Models
+**/piper-tts/
+*.onnx
+*.onnx.json
+*.bin
+*.exe
+*.dll
+*.so
+*.dylib
+large_files.txt
+
+# Logs and output files (may contain secrets)
+backend/error_log*.txt
+backend/output*.txt
+*.log
+run_log*.txt
+push_error.txt

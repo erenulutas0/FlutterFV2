@@ -240,8 +240,12 @@ public class MatchmakingController {
             }
         });
 
-        socketIOServer.start();
-        System.out.println("Socket.IO server started on port 9092");
+        try {
+            socketIOServer.start();
+            System.out.println("Socket.IO server started on port 9092");
+        } catch (Exception e) {
+            System.err.println("Failed to start Socket.IO server: " + e.getMessage());
+        }
     }
 
     @PreDestroy

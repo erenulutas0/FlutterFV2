@@ -18,10 +18,12 @@ import 'widgets/animated_background.dart';
 import 'widgets/navigation_menu_panel.dart';
 import 'widgets/animated_background.dart';
 import 'screens/landing_page.dart';
+import 'screens/login_page.dart';
 import 'screens/profile_page.dart';
 import 'screens/social_feed_page.dart';
 import 'screens/ai_bot_chat_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'screens/splash_screen.dart';
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'services/global_state.dart';
@@ -72,7 +74,8 @@ class VocabMasterApp extends StatelessWidget {
         scaffoldBackgroundColor: Colors.transparent,
         fontFamily: 'Inter',
       ),
-      home: const LandingPage(),
+      // Auth state check via SplashScreen
+      home: const SplashScreen(),
     );
   }
 }

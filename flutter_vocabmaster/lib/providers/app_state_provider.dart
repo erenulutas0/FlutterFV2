@@ -153,6 +153,22 @@ class AppStateProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Login sonrası kullanıcı verisini direkt set et (Flicker önlemek için)
+  void setUser(Map<String, dynamic> user) {
+    _userName = user['displayName'] ?? 'Kullanıcı';
+    _userInfo = user;
+    
+    // Basit istatistikleri varsayılan olarak set et, detaylar sonra yüklenir
+    _userStats['name'] = _userName;
+    if (user['userTag'] != null) _userStats['userTag'] = user['userTag'];
+    
+    _isInitialized = true; // Veri var kabul et
+    notifyListeners();
+    
+    // Arka planda tam veriyi de çek
+    _loadUserData(); 
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // WORDS LOADING
   // ═══════════════════════════════════════════════════════════════

@@ -32,6 +32,9 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   speech_to_text: ^6.6.0
   cached_network_image: ^3.4.0
+  google_fonts: ^6.3.0
+  lucide_icons: ^0.257.0
+  google_sign_in: ^6.2.2
 
 dev_dependencies:
   flutter_test:
