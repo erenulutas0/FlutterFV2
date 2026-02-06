@@ -5,7 +5,14 @@ import '../models/sentence_practice.dart';
 import '../config/app_config.dart';
 
 class ApiService {
+  final http.Client client;
+  final String? _testBaseUrl;
+
+  ApiService({http.Client? client, String? baseUrl}) 
+      : client = client ?? http.Client(), _testBaseUrl = baseUrl;
+
   Future<String> get baseUrl async {
+    if (_testBaseUrl != null) return _testBaseUrl!;
     return await AppConfig.apiBaseUrl;
   }
 
@@ -14,7 +21,7 @@ class ApiService {
   Future<List<Word>> getAllWords() async {
     try {
       final url = await baseUrl;
-      final response = await http.get(Uri.parse('$url/words'));
+      final response = await client.get(Uri.parse('$url/words'));
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         return data.map((json) => Word.fromJson(json)).toList();
@@ -29,7 +36,7 @@ class ApiService {
   Future<Word> getWordById(int id) async {
     try {
       final url = await baseUrl;
-      final response = await http.get(Uri.parse('$url/words/$id'));
+      final response = await client.get(Uri.parse('$url/words/$id'));
       if (response.statusCode == 200) {
         return Word.fromJson(json.decode(response.body));
       }
@@ -42,7 +49,7 @@ class ApiService {
   Future<List<String>> getAllDistinctDates() async {
     try {
       final url = await baseUrl;
-      final response = await http.get(Uri.parse('$url/words/dates'));
+      final response = await client.get(Uri.parse('$url/words/dates'));
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         return data.cast<String>();
@@ -58,7 +65,7 @@ class ApiService {
     try {
       final url = await baseUrl;
       final dateStr = date.toIso8601String().split('T')[0];
-      final response = await http.get(Uri.parse('$url/words/date/$dateStr'));
+      final response = await client.get(Uri.parse('$url/words/date/$dateStr'));
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         return data.map((json) => Word.fromJson(json)).toList();
@@ -78,7 +85,7 @@ class ApiService {
   }) async {
     try {
       final url = await baseUrl;
-      final response = await http.post(
+      final response = await client.post(
         Uri.parse('$url/words'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
@@ -101,7 +108,7 @@ class ApiService {
   Future<void> deleteWord(int id) async {
     try {
       final url = await baseUrl;
-      final response = await http.delete(Uri.parse('$url/words/$id'));
+      final response = await client.delete(Uri.parse('$url/words/$id'));
       if (response.statusCode != 200 && response.statusCode != 204 && response.statusCode != 404) {
         throw Exception('Failed to delete word: ${response.statusCode}');
       }
@@ -118,7 +125,7 @@ class ApiService {
   }) async {
     try {
       final url = await baseUrl;
-      final response = await http.post(
+      final response = await client.post(
         Uri.parse('$url/words/$wordId/sentences'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
@@ -139,7 +146,7 @@ class ApiService {
   Future<void> deleteSentenceFromWord(int wordId, int sentenceId) async {
     try {
       final url = await baseUrl;
-      final response = await http.delete(
+      final response = await client.delete(
         Uri.parse('$url/words/$wordId/sentences/$sentenceId'),
       );
       if (response.statusCode != 200 && response.statusCode != 204 && response.statusCode != 404) {
@@ -155,7 +162,7 @@ class ApiService {
   Future<List<SentencePractice>> getAllSentences() async {
     try {
       final url = await baseUrl;
-      final response = await http.get(Uri.parse('$url/sentences'));
+      final response = await client.get(Uri.parse('$url/sentences'));
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         return data.map((json) => SentencePractice.fromJson(json)).toList();
@@ -174,7 +181,7 @@ class ApiService {
   }) async {
     try {
       final url = await baseUrl;
-      final response = await http.post(
+      final response = await client.post(
         Uri.parse('$url/sentences'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
@@ -204,7 +211,7 @@ class ApiService {
   Future<void> deleteSentence(String id) async {
     try {
       final url = await baseUrl;
-      final response = await http.delete(Uri.parse('$url/sentences/$id'));
+      final response = await client.delete(Uri.parse('$url/sentences/$id'));
       if (response.statusCode != 200 && response.statusCode != 204) {
         throw Exception('Failed to delete sentence: ${response.statusCode}');
       }
@@ -216,7 +223,7 @@ class ApiService {
   Future<Map<String, dynamic>> getSentenceStats() async {
     try {
       final url = await baseUrl;
-      final response = await http.get(Uri.parse('$url/sentences/stats'));
+      final response = await client.get(Uri.parse('$url/sentences/stats'));
       if (response.statusCode == 200) {
         return json.decode(response.body);
       }
@@ -227,4 +234,3 @@ class ApiService {
     }
   }
 }
-

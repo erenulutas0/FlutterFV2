@@ -173,7 +173,8 @@ class _DictionaryPageState extends State<DictionaryPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      bottomNavigationBar: const GlobalMatchmakingSheet(),
+      // MVP: GlobalMatchmakingSheet disabled for v1.0
+      // bottomNavigationBar: const GlobalMatchmakingSheet(),
       body: Stack(
         children: [
           const AnimatedBackground(isDark: true),

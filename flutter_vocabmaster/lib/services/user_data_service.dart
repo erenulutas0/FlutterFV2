@@ -37,10 +37,7 @@ class UserDataService {
     final isMain = email == mainAccountEmail || userTag == mainAccountUserTag;
     print('🔍 UserDataService: isMainAccount = $isMain');
     
-    // DEBUG: Geçici olarak her zaman true döndür
-    // TODO: Aşağıdaki satırı kaldır
-    print('⚠️ DEBUG: Forcing isMainAccount = true');
-    return true; // return isMain;
+    return isMain;
   }
 
   /// Kelime listesini getir (sadece ana hesap için)

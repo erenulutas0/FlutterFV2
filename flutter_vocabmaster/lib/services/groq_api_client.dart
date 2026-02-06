@@ -7,28 +7,24 @@ import 'api_key_manager.dart';
 /// BYOK (Bring Your Own Key) desteği ile API çağrılarını yönetir.
 class GroqApiClient {
   static const String _baseUrl = 'https://api.groq.com/openai/v1/chat/completions';
+  // Pay-as-you-go planı ile 70b modeline geri dönüldü (Yüksek Kalite)
   static const String _defaultModel = 'llama-3.3-70b-versatile';
   
   static final ApiKeyManager _keyManager = ApiKeyManager();
   
-  /// Aktif API key'i alır (BYOK veya .env)
+  /// Aktif API key'i alır (BYOK veya Default)
   static Future<String> _getApiKey() async {
-    // Önce kullanıcının kendi key'ini kontrol et
+    // 1. Kullanıcı kendi key'ini girmişse onu kullan
     final userKey = await _keyManager.getActiveApiKey();
-    
     if (userKey != null && userKey.isNotEmpty) {
       return userKey;
     }
     
-    // Fallback: .env'den al
+    // 2. Fallback: Projenin varsayılan key'i (Pay-as-you-go)
     final envKey = dotenv.env['GROQ_API_KEY'] ?? '';
     
     if (envKey.isEmpty) {
-      throw ApiKeyNotFoundException(
-        'Groq API anahtarı bulunamadı.\n\n'
-        'Ayarlar > API Anahtarı bölümünden kendi Groq API anahtarınızı ekleyin.\n\n'
-        'Ücretsiz anahtar almak için: console.groq.com',
-      );
+      throw ApiKeyNotFoundException('Groq API anahtarı bulunamadı.');
     }
     
     return envKey;

@@ -5,7 +5,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "user_progress")
+@Table(name = "user_progress", indexes = {
+        @Index(name = "idx_user_progress_user_id", columnList = "user_id")
+})
 public class UserProgress {
 
     @Id

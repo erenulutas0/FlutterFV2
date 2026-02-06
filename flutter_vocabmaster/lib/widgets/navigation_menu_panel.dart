@@ -44,8 +44,10 @@ class _NavigationMenuPanelState extends State<NavigationMenuPanel>
     MenuItemData(id: 'words', label: 'Kelimeler', icon: Icons.book),
     MenuItemData(id: 'sentences', label: 'Cümleler', icon: Icons.description),
     MenuItemData(id: 'practice', label: 'Pratik', icon: Icons.school),
-    MenuItemData(id: 'chat', label: 'Sohbet', icon: Icons.chat_bubble),
-    MenuItemData(id: 'feed', label: 'Social Feed', icon: Icons.rss_feed),
+    // MVP: Social features disabled for v1.0
+    // MenuItemData(id: 'chat', label: 'Sohbet', icon: Icons.chat_bubble),
+    // MenuItemData(id: 'feed', label: 'Social Feed', icon: Icons.rss_feed),
+    // MenuItemData(id: 'notifications', label: 'Bildirimler', icon: Icons.notifications),
     MenuItemData(id: 'stats', label: 'İstatistikler', icon: Icons.bar_chart),
   ];
 

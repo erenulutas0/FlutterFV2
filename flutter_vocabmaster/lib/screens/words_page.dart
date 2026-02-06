@@ -59,28 +59,11 @@ class _WordsPageState extends State<WordsPage> {
   }
 
   Future<void> _loadDatesWithWords() async {
-    try {
-      final dates = await _offlineSyncService.getAllDistinctDates();
-      setState(() {
-        _datesWithWords = dates.toSet();
-      });
-    } catch (e) {
-      print('Error loading dates: $e');
-    }
+    // AppStateProvider otomatik yönetiyor
   }
 
   Future<void> _loadWordsForDate(DateTime date) async {
-    setState(() => _isLoading = true);
-    try {
-      final words = await _offlineSyncService.getWordsByDate(date);
-      setState(() {
-        _wordsForSelectedDate = words;
-        _isLoading = false;
-      });
-    } catch (e) {
-      print('Error loading words: $e');
-      setState(() => _isLoading = false);
-    }
+    // AppStateProvider otomatik yönetiyor
   }
 
   void _onDaySelected(int day) {
@@ -109,15 +92,17 @@ class _WordsPageState extends State<WordsPage> {
       return;
     }
 
-    setState(() => _isAddingWord = true);
+    setState(() => _isLoading = true); // _isAddingWord yerine _isLoading kullanalım veya _isAddingWord
 
     try {
       String difficulty = 'easy';
       if (_selectedDifficulty == 'Orta') difficulty = 'medium';
       if (_selectedDifficulty == 'Zor') difficulty = 'hard';
 
-      // OfflineSyncService ile kelime ekle (Otomatik olarak offline/online yönetir)
-      await _offlineSyncService.createWord(
+      final appState = context.read<AppStateProvider>();
+
+      // AppStateProvider ile kelime ekle - XP ve Stats otomatik güncellenir
+      await appState.addWord(
         english: english,
         turkish: turkish,
         addedDate: _selectedDate,
@@ -129,19 +114,14 @@ class _WordsPageState extends State<WordsPage> {
       _turkishMeaningController.clear();
       setState(() => _selectedDifficulty = 'Kolay');
 
-      // Listeyi yenile
+      // Yerel listeyi yenile (AppStateProvider global listeyi güncelledi ama bu sayfa tarihe göre filtreliyor)
       await _loadWordsForDate(_selectedDate);
       await _loadDatesWithWords();
       
-      // Global listeyi de yenile
-      if (mounted) {
-        context.read<AppStateProvider>().refreshWords();
-      }
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Kelime başarıyla eklendi!'),
+            content: Text('Kelime başarıyla eklendi! (+10 XP)'), // XP bilgisini de ekleyelim
             backgroundColor: Colors.green,
           ),
         );
@@ -157,10 +137,11 @@ class _WordsPageState extends State<WordsPage> {
       }
     } finally {
       if (mounted) {
-        setState(() => _isAddingWord = false);
+        setState(() => _isLoading = false);
       }
     }
   }
+
 
   void _changeMonth(int delta) {
     setState(() {
@@ -170,6 +151,23 @@ class _WordsPageState extends State<WordsPage> {
 
   @override
   Widget build(BuildContext context) {
+    // AppStateProvider entegrasyonu (Anlık güncelleme)
+    final appState = context.watch<AppStateProvider>();
+    final allWords = appState.allWords;
+    
+    // Tarihleri güncelle
+    _datesWithWords = allWords.map((w) => w.learnedDate.toIso8601String().split('T')[0]).toSet();
+    
+    // Seçili tarihe göre kelimeleri filtrele
+    final selectedDateStr = _selectedDate.toIso8601String().split('T')[0];
+    _wordsForSelectedDate = allWords.where((w) {
+      final wDate = w.learnedDate.toIso8601String().split('T')[0];
+      return wDate == selectedDateStr;
+    }).toList();
+    
+    // Sıralama (ID'ye göre ters - en yeni en üstte)
+    _wordsForSelectedDate.sort((a, b) => b.id.compareTo(a.id));
+
     return Scaffold(
       body: Stack(
         children: [

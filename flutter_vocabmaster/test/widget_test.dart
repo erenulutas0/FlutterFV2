@@ -1,30 +1,51 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:flutter_vocabmaster/main.dart';
+import 'package:vocabmaster/widgets/bottom_nav.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('BottomNav renders correctly', (WidgetTester tester) async {
+    // Build BottomNav inside MaterialApp
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          bottomNavigationBar: BottomNav(
+            currentIndex: 0,
+            onTap: (index) {},
+          ),
+        ),
+      ),
+    );
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    // Verify icons are present
+    expect(find.byIcon(Icons.home_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.menu_book_rounded), findsOneWidget); // Was fails on Icons.book
+    
+    // ...
+    // expect(find.byType(BottomNavigationBarItem)... (removed)
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  });
+  
+  testWidgets('BottomNav callback works', (WidgetTester tester) async {
+    int tappedIndex = -1;
+    
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          bottomNavigationBar: BottomNav(
+            currentIndex: 0,
+            onTap: (index) {
+              tappedIndex = index;
+            },
+          ),
+        ),
+      ),
+    );
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Find the words icon (index 1) and tap it
+    await tester.tap(find.byIcon(Icons.menu_book_rounded));
+    await tester.pumpAndSettle(); // Wait for animation
+
+    // Verify callback was called with index 1
+    expect(tappedIndex, 1);
   });
 }

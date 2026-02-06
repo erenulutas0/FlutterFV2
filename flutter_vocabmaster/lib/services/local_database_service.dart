@@ -431,12 +431,24 @@ class LocalDatabaseService {
   /// XP ekle
   Future<void> addXp(int amount) async {
     final db = await database;
-    await db.rawUpdate('''
+    
+    // Check if update affects any rows
+    final changes = await db.rawUpdate('''
       UPDATE user_stats 
       SET totalXp = totalXp + ?,
           pendingXp = pendingXp + ?,
           lastUpdated = ?
     ''', [amount, amount, DateTime.now().toIso8601String()]);
+    
+    // If table is empty, insert first row
+    if (changes == 0) {
+      await db.insert('user_stats', {
+        'totalXp': amount,
+        'lastSyncedXp': 0,
+        'pendingXp': amount,
+        'lastUpdated': DateTime.now().toIso8601String(),
+      });
+    }
   }
 
   /// Toplam XP getir

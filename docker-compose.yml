@@ -39,7 +39,7 @@ services:
   # Spring Boot Backend
   backend:
     build:
-      context: ./backend_v2
+      context: ./backend
       dockerfile: Dockerfile
     container_name: english-app-backend
     volumes:

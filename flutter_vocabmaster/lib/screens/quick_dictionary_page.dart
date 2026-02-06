@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:provider/provider.dart';
 import '../widgets/animated_background.dart';
 import '../widgets/bottom_nav.dart';
 import '../widgets/global_matchmaking_sheet.dart';
@@ -7,6 +8,8 @@ import '../services/groq_service.dart';
 import '../services/api_service.dart';
 import '../widgets/modern_card.dart';
 import '../widgets/modern_background.dart';
+import '../providers/app_state_provider.dart';
+
 
 class QuickDictionaryPage extends StatefulWidget {
   const QuickDictionaryPage({Key? key}) : super(key: key);
@@ -18,7 +21,8 @@ class QuickDictionaryPage extends StatefulWidget {
 class _QuickDictionaryPageState extends State<QuickDictionaryPage> {
   final TextEditingController _searchController = TextEditingController();
   final FlutterTts _flutterTts = FlutterTts();
-  final ApiService _apiService = ApiService();
+  // ApiService kaldırıldı - AppStateProvider kullanılıyor
+
   
   bool _isSearching = false;
   bool _hasSearched = false;
@@ -370,18 +374,38 @@ class _QuickDictionaryPageState extends State<QuickDictionaryPage> {
 
   Future<void> _addWordToToday(WordMeaning meaning, String difficulty) async {
     try {
-      await _apiService.createWord(
+      final appState = context.read<AppStateProvider>();
+      final addedDate = DateTime.now();
+      
+      // AppStateProvider üzerinden ekle - otomatik XP ve stats güncellenir
+      final word = await appState.addWord(
         english: _searchedWord,
         turkish: '(${meaning.type}) ${meaning.turkishMeaning}',
+        addedDate: addedDate,
         difficulty: difficulty,
-        addedDate: DateTime.now(),
       );
       
+      // Eğer örnek cümle varsa onu da ekle (ve +5 XP daha kazan)
+      if (word != null && meaning.example.isNotEmpty) {
+        await appState.addSentenceToWord(
+          wordId: word.id,
+          sentence: meaning.example,
+          translation: meaning.exampleTranslation,
+          difficulty: difficulty,
+        );
+      }
+      
       if (mounted) {
+        String message = '✅ Kelime başarıyla eklendi! (+10 XP)';
+        if (meaning.example.isNotEmpty) {
+          message = '✅ Kelime ve cümle başarıyla eklendi! (+15 XP)';
+        }
+        
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ Kelime başarıyla eklendi!'),
-            backgroundColor: Color(0xFF10b981),
+          SnackBar(
+            content: Text(message),
+            backgroundColor: const Color(0xFF10b981),
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
@@ -499,7 +523,8 @@ class _QuickDictionaryPageState extends State<QuickDictionaryPage> {
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const GlobalMatchmakingSheet(),
+          // MVP: GlobalMatchmakingSheet disabled for v1.0
+          // const GlobalMatchmakingSheet(),
           BottomNav(
             currentIndex: 2,
             onTap: (index) {

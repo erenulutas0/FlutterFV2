@@ -4,43 +4,27 @@ import 'package:flutter/material.dart';
 import '../widgets/bottom_nav.dart';
 import '../widgets/global_matchmaking_sheet.dart';
 import '../widgets/navigation_menu_panel.dart';
-import '../main.dart'; // For MainScreen
+import '../main.dart';
 import 'chat_list_page.dart';
 import 'quick_dictionary_page.dart';
 import 'review_page.dart';
 import 'profile_page.dart';
 import 'stats_page.dart';
+import '../services/social_service.dart';
+import 'friend_list_page.dart';
+import 'notifications_page.dart';
 
 // ---------------------------------------------------------------------------
 // DATA MODELS
 // ---------------------------------------------------------------------------
 
-class Award {
-  final String id;
-  final String name;
-  final IconData icon;
-  final Color color;
-  final List<Color> gradientColors;
-  int count;
-
-  Award({
-    required this.id,
-    required this.name,
-    required this.icon,
-    required this.color,
-    required this.gradientColors,
-    this.count = 0,
-  });
-}
-
 class Comment {
-  final String id;
-  final String userId;
+  final int id;
+  final int userId;
   final String userName;
   final String userAvatar;
   final String content;
   final String timestamp;
-  final int likes;
 
   Comment({
     required this.id,
@@ -49,13 +33,24 @@ class Comment {
     required this.userAvatar,
     required this.content,
     required this.timestamp,
-    required this.likes,
   });
+
+  factory Comment.fromJson(Map<String, dynamic> json) {
+    final user = json['user'];
+    return Comment(
+      id: json['id'],
+      userId: user['id'],
+      userName: user['displayName'] ?? 'User',
+      userAvatar: user['photoUrl'] ?? ((user['displayName'] ?? 'U')[0]), // Fallback to initial
+      content: json['content'],
+      timestamp: json['createdAt'] ?? '',
+    );
+  }
 }
 
 class Post {
-  final String id;
-  final String userId;
+  final int id;
+  final int userId;
   final String userName;
   final String userAvatar;
   final String userHandle;
@@ -63,11 +58,9 @@ class Post {
   final String content;
   final String? imageUrl;
   int likes;
-  final List<Comment> comments;
-  bool bookmarked;
+  int commentCount;
+  List<Comment> comments; // Loaded on demand usually, but keeping list structure
   bool liked;
-  bool following;
-  final List<Award> awards;
 
   Post({
     required this.id,
@@ -79,12 +72,41 @@ class Post {
     required this.content,
     this.imageUrl,
     required this.likes,
-    required this.comments,
-    required this.bookmarked,
-    required this.liked,
-    required this.following,
-    required this.awards,
+    required this.commentCount,
+    this.comments = const [],
+    this.liked = false,
   });
+
+  factory Post.fromJson(Map<String, dynamic> json) {
+    final user = json['user'];
+    String displayName = user['displayName'] ?? 'User';
+    
+    // Parse timestamp
+    String timeStr = 'Şimdi';
+    if (json['createdAt'] != null) {
+      try {
+        final dt = DateTime.parse(json['createdAt']);
+        final diff = DateTime.now().difference(dt);
+        if (diff.inMinutes < 60) timeStr = '${diff.inMinutes} dk önce';
+        else if (diff.inHours < 24) timeStr = '${diff.inHours} saat önce';
+        else timeStr = '${diff.inDays} gün önce';
+      } catch (_) {}
+    }
+
+    return Post(
+      id: json['id'],
+      userId: user['id'],
+      userName: displayName,
+      userAvatar: displayName.isNotEmpty ? displayName[0] : 'U', 
+      userHandle: '@${displayName.toLowerCase().replaceAll(' ', '')}',
+      timestamp: timeStr,
+      content: json['content'],
+      imageUrl: json['mediaUrl'],
+      likes: json['likeCount'] ?? 0,
+      commentCount: json['commentCount'] ?? 0,
+      liked: json['liked'] ?? false, // Parse liked status from backend
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -103,17 +125,42 @@ class _SocialFeedPageState extends State<SocialFeedPage>
   List<Post> posts = [];
   bool showCreatePost = false;
   TextEditingController newPostController = TextEditingController();
-  Set<String> expandedComments = {};
-  Map<String, TextEditingController> commentControllers = {};
-  String? activeAwardMenu;
+  Set<int> expandedComments = {}; // Changed to int ID
+  Map<int, TextEditingController> commentControllers = {};
   late List<AnimationController> _rainControllers;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final SocialService _socialService = SocialService();
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _initPosts();
+    _loadFeed();
     _initRainAnimations();
+  }
+
+  Future<void> _loadFeed() async {
+    try {
+      final List<dynamic> feedData = await _socialService.getFeed();
+      if (mounted) {
+        setState(() {
+          posts = feedData.map((json) => Post.fromJson(json)).toList();
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        debugPrint('Feed error: $e');
+      }
+    }
+  }
+
+  String _formatTimestamp(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 60) return '${diff.inMinutes} dk önce';
+    if (diff.inHours < 24) return '${diff.inHours} saat önce';
+    return '${diff.inDays} gün önce';
   }
 
   @override
@@ -150,220 +197,47 @@ class _SocialFeedPageState extends State<SocialFeedPage>
   // SAMPLE DATA
   // ---------------------------------------------------------------------------
 
-  List<Award> _getAvailableAwards() {
-    return [
-      Award(
-        id: 'wholesome',
-        name: 'Wholesome',
-        icon: Icons.favorite,  // Heart
-        color: const Color(0xFFFF6B9D),
-        gradientColors: [const Color(0xFFF9A8D4), const Color(0xFFF43F5E)],  // pink-400 to rose-500
-      ),
-      Award(
-        id: 'helpful',
-        name: 'Helpful',
-        icon: Icons.lightbulb,
-        color: const Color(0xFFFBBF24),
-        gradientColors: [const Color(0xFFFBBF24), const Color(0xFFF97316)],  // yellow-400 to orange-500
-      ),
-      Award(
-        id: 'rocket',
-        name: 'Rocket',
-        icon: Icons.rocket_launch,
-        color: const Color(0xFF06B6D4),
-        gradientColors: [const Color(0xFF22D3EE), const Color(0xFF3B82F6)],  // cyan-400 to blue-500
-      ),
-      Award(
-        id: 'star',
-        name: 'Star',
-        icon: Icons.star,
-        color: const Color(0xFFA78BFA),
-        gradientColors: [const Color(0xFFC084FC), const Color(0xFF6366F1)],  // purple-400 to indigo-500
-      ),
-      Award(
-        id: 'fire',
-        name: 'Fire',
-        icon: Icons.local_fire_department,
-        color: const Color(0xFFF97316),
-        gradientColors: [const Color(0xFFF97316), const Color(0xFFDC2626)],  // orange-500 to red-600
-      ),
-    ];
-  }
+  // Awards removed
+
 
   void _initPosts() {
-    posts = [
-      Post(
-        id: '1',
-        userId: 'user1',
-        userName: 'Sarah Johnson',
-        userAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah',
-        userHandle: '@sarahj',
-        timestamp: '2 saat önce',
-        content: "Just completed my 100-day streak on VocabMaster! 🎉 The key is consistency. Every single day, even if it's just 5 minutes, makes a huge difference. What's your longest streak? #EnglishLearning #Motivation",
-        imageUrl: null,
-        likes: 42,
-        comments: [
-          Comment(
-            id: 'c1',
-            userId: 'user2',
-            userName: 'Mike Chen',
-            userAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Mike',
-            content: 'Congrats! That\'s amazing dedication 👏',
-            timestamp: '1 saat önce',
-            likes: 5,
-          ),
-        ],
-        bookmarked: false,
-        liked: false,
-        following: false,
-        awards: [
-          Award(id: 'wholesome', name: 'Wholesome', icon: Icons.favorite, 
-                color: const Color(0xFFFF6B9D), 
-                gradientColors: [const Color(0xFFF9A8D4), const Color(0xFFF43F5E)], count: 3),
-          Award(id: 'helpful', name: 'Helpful', icon: Icons.lightbulb, 
-                color: const Color(0xFFFBBF24), 
-                gradientColors: [const Color(0xFFFBBF24), const Color(0xFFF97316)], count: 0),
-          Award(id: 'rocket', name: 'Rocket', icon: Icons.rocket_launch, 
-                color: const Color(0xFF06B6D4), 
-                gradientColors: [const Color(0xFF22D3EE), const Color(0xFF3B82F6)], count: 5),
-          Award(id: 'star', name: 'Star', icon: Icons.star, 
-                color: const Color(0xFFA78BFA), 
-                gradientColors: [const Color(0xFFC084FC), const Color(0xFF6366F1)], count: 0),
-          Award(id: 'fire', name: 'Fire', icon: Icons.local_fire_department, 
-                color: const Color(0xFFF97316), 
-                gradientColors: [const Color(0xFFF97316), const Color(0xFFDC2626)], count: 2),
-        ],
-      ),
-      
-      Post(
-        id: '2',
-        userId: 'user3',
-        userName: 'Emma Williams',
-        userAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Emma',
-        userHandle: '@emmaw',
-        timestamp: '5 saat önce',
-        content: "Pro tip: Watch your favorite Netflix shows in English with English subtitles. I've learned so many phrasal verbs this way! Currently binge-watching Stranger Things 📺 What shows do you recommend?",
-        imageUrl: 'https://images.unsplash.com/photo-1522869635100-9f4c5e86aa37?w=800&q=80',
-        likes: 87,
-        comments: [],
-        bookmarked: true,
-        liked: true,
-        following: true,
-        awards: [
-          Award(id: 'wholesome', name: 'Wholesome', icon: Icons.favorite, 
-                color: const Color(0xFFFF6B9D), 
-                gradientColors: [const Color(0xFFF9A8D4), const Color(0xFFF43F5E)], count: 1),
-          Award(id: 'helpful', name: 'Helpful', icon: Icons.lightbulb, 
-                color: const Color(0xFFFBBF24), 
-                gradientColors: [const Color(0xFFFBBF24), const Color(0xFFF97316)], count: 12),
-          Award(id: 'rocket', name: 'Rocket', icon: Icons.rocket_launch, 
-                color: const Color(0xFF06B6D4), 
-                gradientColors: [const Color(0xFF22D3EE), const Color(0xFF3B82F6)], count: 0),
-          Award(id: 'star', name: 'Star', icon: Icons.star, 
-                color: const Color(0xFFA78BFA), 
-                gradientColors: [const Color(0xFFC084FC), const Color(0xFF6366F1)], count: 7),
-          Award(id: 'fire', name: 'Fire', icon: Icons.local_fire_department, 
-                color: const Color(0xFFF97316), 
-                gradientColors: [const Color(0xFFF97316), const Color(0xFFDC2626)], count: 0),
-        ],
-      ),
-      
-      Post(
-        id: '3',
-        userId: 'user4',
-        userName: 'David Lee',
-        userAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=David',
-        userHandle: '@davidlee',
-        timestamp: '1 gün önce',
-        content: "Finally understood the difference between 'affect' and 'effect'! 💡\n\nAffect = verb (to influence)\nEffect = noun (the result)\n\nExample: The weather affected my mood. The effect was immediate.\n\nGrammar is tough but we got this! 💪",
-        imageUrl: null,
-        likes: 156,
-        comments: [
-          Comment(
-            id: 'c2',
-            userId: 'user5',
-            userName: 'Lisa Park',
-            userAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Lisa',
-            content: 'This is so helpful! I always mix these up 😅',
-            timestamp: '20 saat önce',
-            likes: 8,
-          ),
-          Comment(
-            id: 'c3',
-            userId: 'user6',
-            userName: 'Tom Anderson',
-            userAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Tom',
-            content: 'Great explanation! Saved this post for future reference.',
-            timestamp: '18 saat önce',
-            likes: 3,
-          ),
-        ],
-        bookmarked: false,
-        liked: false,
-        following: false,
-        awards: [
-          Award(id: 'wholesome', name: 'Wholesome', icon: Icons.favorite, 
-                color: const Color(0xFFFF6B9D), 
-                gradientColors: [const Color(0xFFF9A8D4), const Color(0xFFF43F5E)], count: 0),
-          Award(id: 'helpful', name: 'Helpful', icon: Icons.lightbulb, 
-                color: const Color(0xFFFBBF24), 
-                gradientColors: [const Color(0xFFFBBF24), const Color(0xFFF97316)], count: 24),
-          Award(id: 'rocket', name: 'Rocket', icon: Icons.rocket_launch, 
-                color: const Color(0xFF06B6D4), 
-                gradientColors: [const Color(0xFF22D3EE), const Color(0xFF3B82F6)], count: 3),
-          Award(id: 'star', name: 'Star', icon: Icons.star, 
-                color: const Color(0xFFA78BFA), 
-                gradientColors: [const Color(0xFFC084FC), const Color(0xFF6366F1)], count: 0),
-          Award(id: 'fire', name: 'Fire', icon: Icons.local_fire_department, 
-                color: const Color(0xFFF97316), 
-                gradientColors: [const Color(0xFFF97316), const Color(0xFFDC2626)], count: 1),
-        ],
-      ),
-    ];
+    posts = []; // Removed mockup data
   }
 
-  void _createPost() {
+  Future<void> _createPost() async {
     if (newPostController.text.trim().isEmpty) return;
     
-    setState(() {
-      posts.insert(0, Post(
-        id: 'post-${DateTime.now().millisecondsSinceEpoch}',
-        userId: 'current-user',
-        userName: 'Ahmet Yılmaz',
-        userAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=current',
-        userHandle: '@ahmetyilmaz',
-        timestamp: 'Şimdi',
-        content: newPostController.text,
-        imageUrl: null,
-        likes: 0,
-        comments: [],
-        bookmarked: false,
-        liked: false,
-        following: false,
-        awards: _getAvailableAwards(),
-      ));
-      newPostController.clear();
-      showCreatePost = false;
-    });
+    try {
+      final newPostJson = await _socialService.createPost(newPostController.text);
+      if (mounted) {
+        setState(() {
+          posts.insert(0, Post.fromJson(newPostJson));
+          newPostController.clear();
+          showCreatePost = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Create post error: $e');
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Paylaşım yapılamadı')));
+    }
   }
   
-  void _addComment(Post post, String text) {
+  Future<void> _addComment(Post post, String text) async {
     if (text.trim().isEmpty) return;
     
-    setState(() {
-      post.comments.add(
-        Comment(
-          id: 'comment-${DateTime.now().millisecondsSinceEpoch}',
-          userId: 'current-user',
-          userName: 'Ahmet Yılmaz',
-          userAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=current',
-          content: text,
-          timestamp: 'Şimdi',
-          likes: 0,
-        ),
-      );
-      commentControllers[post.id]!.clear();
-    });
+    try {
+      final newCommentJson = await _socialService.commentPost(post.id, text);
+      if (mounted) {
+        setState(() {
+          post.comments.add(Comment.fromJson(newCommentJson));
+          post.commentCount++;
+          commentControllers[post.id]?.clear();
+        });
+      }
+    } catch (e) {
+      debugPrint('Comment error: $e');
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Yorum yapılamadı')));
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -496,16 +370,43 @@ class _SocialFeedPageState extends State<SocialFeedPage>
                     ],
                   ),
                   
-                  // Friends Button
-                  IconButton(
-                    onPressed: () {},
-                    icon: const Icon(Icons.people, color: Color(0xFF22D3EE), size: 24),
-                    style: IconButton.styleFrom(
-                      backgroundColor: const Color(0x1AFFFFFF),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                  // Action Buttons
+                  Row(
+                    children: [
+                      // Notifications Button
+                      IconButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => const NotificationsPage()),
+                          );
+                        },
+                        icon: const Icon(Icons.notifications_outlined, color: Color(0xFF22D3EE), size: 24),
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0x1AFFFFFF),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      // Friends Button
+                      IconButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => const FriendListPage()),
+                          );
+                        },
+                        icon: const Icon(Icons.people_outline, color: Color(0xFF22D3EE), size: 24),
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0x1AFFFFFF),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -620,29 +521,25 @@ class _SocialFeedPageState extends State<SocialFeedPage>
         
         const SizedBox(width: 8),
         
-        // Follow Button
+        // Follow Button (Not fully implemented yet)
         ElevatedButton(
           onPressed: () {
-            setState(() {
-              post.following = !post.following;
-            });
+            // Placeholder for follow
           },
           style: ElevatedButton.styleFrom(
-            backgroundColor: post.following ? const Color(0x1AFFFFFF) : const Color(0xFF06B6D4), // Cyan if not following
+            backgroundColor: const Color(0xFF06B6D4), // Cyan if not following
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             minimumSize: Size.zero, 
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(20),
-              side: post.following 
-                ? const BorderSide(color: Color(0x4D22D3EE))
-                : BorderSide.none,
+              side: BorderSide.none,
             ),
           ),
-          child: Text(
-            post.following ? 'Takipte' : 'Takip Et',
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          child: const Text(
+            'Takip Et',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
           ),
         ),
         
@@ -673,7 +570,8 @@ class _SocialFeedPageState extends State<SocialFeedPage>
     );
   }
 
-  Widget _buildPostImage(String imageUrl) {
+  Widget _buildPostImage(String? imageUrl) {
+    if (imageUrl == null || imageUrl.isEmpty) return const SizedBox.shrink();
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: Container(
@@ -689,12 +587,7 @@ class _SocialFeedPageState extends State<SocialFeedPage>
           width: double.infinity,
           fit: BoxFit.cover,
           errorBuilder: (context, error, stackTrace) {
-             // Fallback if post content image fails (less likely than avatar issues for now)
-             return Container(
-               height: 200,
-               color: Colors.white.withOpacity(0.05),
-               child: const Center(child: Icon(Icons.image_not_supported, color: Colors.white24, size: 48)),
-             );
+             return const SizedBox.shrink();
           },
         ),
       ),
@@ -702,54 +595,8 @@ class _SocialFeedPageState extends State<SocialFeedPage>
   }
 
   Widget _buildAwardsDisplay(Post post) {
-    final activeAwards = post.awards.where((a) => a.count > 0).toList();
-    
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: activeAwards.map((award) {
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: award.gradientColors.map((c) => c.withOpacity(0.2)).toList(),
-            ),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: const Color(0x33FFFFFF),
-              width: 1,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                award.icon,
-                size: 16,
-                color: award.color,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                '${award.count}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Text(
-                award.name,
-                style: const TextStyle(
-                  color: Color(0xB3FFFFFF),
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
-    );
+    // Disabled Awards for MVP
+    return const SizedBox.shrink(); 
   }
 
   Widget _buildActionButton({
@@ -808,73 +655,8 @@ class _SocialFeedPageState extends State<SocialFeedPage>
   }
 
   Widget _buildAwardButton(Post post) {
-    return PopupMenuButton<Award>(
-      offset: const Offset(0, -10),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: Color(0x4D22D3EE)),
-      ),
-      color: const Color(0xFF1E293B),  // slate-800
-      onSelected: (award) {
-        setState(() {
-          final index = post.awards.indexWhere((a) => a.id == award.id);
-          if (index != -1) {
-            post.awards[index].count++;
-          }
-        });
-      },
-      itemBuilder: (context) {
-        return _getAvailableAwards().map((award) {
-          return PopupMenuItem<Award>(
-            value: award,
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Row(
-                children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(colors: award.gradientColors),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      award.icon,
-                      size: 16,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    award.name,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }).toList();
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-        decoration: BoxDecoration(
-          color: const Color(0x1AFFFFFF),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.auto_awesome, color: Color(0xB3FFFFFF), size: 18),
-            // Removed text 'Award' to save space or just keep it small if preferred, 
-            // but for overflow fix, removing or flexible is best. Let's keep icon only or very short.
-            // Sized box was here.
-          ],
-        ),
-      ),
-    );
+    // Disabled Awards for MVP
+    return const SizedBox.shrink();
   }
 
   Widget _buildCommentItem(Comment comment) {
@@ -951,7 +733,7 @@ class _SocialFeedPageState extends State<SocialFeedPage>
         Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _buildAvatar('Ahmet Yılmaz', size: 32),
+            _buildAvatar('Ben', size: 32),
             
             const SizedBox(width: 12),
             
@@ -1015,6 +797,11 @@ class _SocialFeedPageState extends State<SocialFeedPage>
   }
 
   Widget _buildActionButtons(Post post) {
+    // Calculate total count (comments count is now int in class)
+    final commentCount = post.comments.length > post.commentCount 
+        ? post.comments.length 
+        : post.commentCount; // Use whichever is larger (optimistic update vs initial load)
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween, // Distribute space evenly
       children: [
@@ -1024,11 +811,35 @@ class _SocialFeedPageState extends State<SocialFeedPage>
           label: '${post.likes}',
           isActive: post.liked,
           activeGradient: [const Color(0xFFEC4899), const Color(0xFFF43F5E)],  // pink to rose
-          onTap: () {
+          onTap: () async {
+            // Toggle like - Optimistic UI update
+            final wasLiked = post.liked;
+            final oldLikes = post.likes;
+            
             setState(() {
-              post.liked = !post.liked;
-              post.likes += post.liked ? 1 : -1;
+              post.liked = !wasLiked;
+              post.likes = wasLiked ? post.likes - 1 : post.likes + 1;
             });
+
+            try {
+              final result = await _socialService.toggleLike(post.id);
+              // Sync with backend response
+              if (mounted) {
+                setState(() {
+                  post.liked = result['liked'] ?? !wasLiked;
+                  post.likes = result['likeCount'] ?? post.likes;
+                });
+              }
+            } catch (e) {
+              // Revert on error
+              if (mounted) {
+                setState(() {
+                  post.liked = wasLiked;
+                  post.likes = oldLikes;
+                });
+              }
+              debugPrint('Like toggle error: $e');
+            }
           },
         ),
         
@@ -1048,27 +859,8 @@ class _SocialFeedPageState extends State<SocialFeedPage>
           },
         ),
         
-        // Award Button with Menu
-        _buildAwardButton(post),
-        
-        // Bookmark Button
-        IconButton(
-          onPressed: () {
-            setState(() {
-              post.bookmarked = !post.bookmarked;
-            });
-          },
-          icon: Icon(
-            post.bookmarked ? Icons.bookmark : Icons.bookmark_border,
-            color: Colors.white,
-            size: 20,
-          ),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
-          style: IconButton.styleFrom(
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ),
-        ),
+        // Create Space
+        const SizedBox(width: 48),
         
         // Share Button
         IconButton(
@@ -1137,10 +929,7 @@ class _SocialFeedPageState extends State<SocialFeedPage>
                   const SizedBox(height: 16),
                   _buildPostImage(post.imageUrl!),
                 ],
-                if (post.awards.any((a) => a.count > 0)) ...[
-                  const SizedBox(height: 16),
-                  _buildAwardsDisplay(post),
-                ],
+
                 const SizedBox(height: 16),
                 const Divider(color: Color(0x1AFFFFFF), height: 1),
                 const SizedBox(height: 12),
@@ -1288,6 +1077,7 @@ class _SocialFeedPageState extends State<SocialFeedPage>
                         Expanded(
                           child: TextField(
                             controller: newPostController,
+                            onChanged: (_) => setState(() {}),
                             maxLines: 5,
                             style: const TextStyle(color: Colors.white),
                             decoration: InputDecoration(
@@ -1379,106 +1169,64 @@ class _SocialFeedPageState extends State<SocialFeedPage>
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      drawer: NavigationMenuPanel(
-        activeTab: '', 
-        currentPage: 'feed', 
-        onTabChange: (id) {
-           Navigator.pop(context); // Close drawer
-           
-           if (['home', 'words', 'sentences', 'practice'].contains(id)) {
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => MainScreen(initialIndex: 
-                  id == 'home' ? 0 : 
-                  id == 'words' ? 1 : 
-                  id == 'sentences' ? 3 : 4
-                )),
-                (route) => false,
-              );
-           }
-        },
-        onNavigate: (id) {
-           Navigator.pop(context); // Close drawer
-           
-           if (id == 'feed') return;
-           
-           if (id == 'chat') {
-               Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ChatListPage()));
-           } else if (id == 'speaking') {
-               Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const MainScreen(initialIndex: 4)), 
-                (route) => false,
-              );
-           } else if (id == 'dictionary') {
-              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const QuickDictionaryPage()));
-           } else if (id == 'repeat') {
-               Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ReviewPage())); // Using class directly
-           } else if (id == 'profile-settings') {
-              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ProfilePage()));
-           } else if (id == 'stats') {
-              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const StatsPage()));
-           }
-        },
-      ),
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF0F172A),  // slate-900
-              Color(0xFF1E3A8A),  // blue-900
-              Color(0xFF0F172A),  // slate-900
+      backgroundColor: const Color(0xFF0F172A),
+      body: Stack(
+        children: [
+          _buildAnimatedBackground(),
+          Column(
+            children: [
+              _buildHeader(),
+              Expanded(
+                child: _isLoading 
+                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF22D3EE)))
+                  : posts.isEmpty 
+                    ? _buildEmptyState()
+                    : ListView.builder(
+                        padding: const EdgeInsets.only(top: 16, bottom: 100),
+                        itemCount: posts.length,
+                        itemBuilder: (context, index) => _buildPostCard(posts[index], index),
+                      ),
+              ),
             ],
-            stops: [0.0, 0.5, 1.0],
           ),
-        ),
-        child: Stack(
-          children: [
-            // Animated Background
-            _buildAnimatedBackground(),
-            
-            // Main Content - Added Padding for BottomNav space if not part of scaffold bottomNavigationBar
-            // Actually, if we use scaffold's bottomNavigationBar, the body should automatically adjust if we don't use extendBody.
-            // But main app uses extendBody: true. Let's do same here for consistency.
-            Column(
-              children: [
-                _buildHeader(),
-                Expanded(
-                  child: ListView.builder(
-                    padding: const EdgeInsets.only(top: 16, bottom: 96),
-                    itemCount: posts.length,
-                    itemBuilder: (context, index) {
-                      return _buildPostCard(posts[index], index);
-                    },
-                  ),
-                ),
-              ],
-            ),
-            
-            // Floating Action Button
-            _buildFloatingActionButton(),
-            
-            // Create Post Modal
-            if (showCreatePost) _buildCreatePostModal(),
-          ],
-        ),
+          if (showCreatePost) _buildCreatePostModal(),
+        ],
       ),
+      floatingActionButton: _buildFloatingActionButton(),
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           const GlobalMatchmakingSheet(),
           BottomNav(
-            currentIndex: -1, // No tab selected
+            currentIndex: -1,
             onTap: (index) {
-              if (index == 2) {
-                 _scaffoldKey.currentState?.openDrawer();
-              } else {
-                 Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (_) => MainScreen(initialIndex: index)),
-                    (route) => false,
-                 );
-              }
+               Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (context) => MainScreen(initialIndex: index)),
+                (route) => false,
+              );
             },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.feed_outlined, size: 64, color: Colors.white.withOpacity(0.2)),
+          const SizedBox(height: 16),
+          Text(
+            'Henüz paylaşım yok',
+            style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 18),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'İlk paylaşımı sen yaparak topluluğu başlat!',
+            style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 14),
           ),
         ],
       ),

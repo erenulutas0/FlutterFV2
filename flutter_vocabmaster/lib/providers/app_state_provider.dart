@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../services/offline_sync_service.dart';
 import '../services/user_data_service.dart';
 import '../services/auth_service.dart';
+import '../services/xp_service.dart';
 import '../models/word.dart';
 import '../models/sentence_view_model.dart';
 import '../services/groq_service.dart';
@@ -197,6 +198,7 @@ class AppStateProvider extends ChangeNotifier {
   }
 
   /// Kelime ekle - ve listeyi güncelle
+  /// XP, toplam kelime ve günlük hedef otomatik güncellenir
   Future<Word?> addWord({
     required String english,
     required String turkish,
@@ -212,6 +214,14 @@ class AppStateProvider extends ChangeNotifier {
       );
       if (newWord != null) {
         _allWords.insert(0, newWord); // Başa ekle
+        
+        // 🎯 Anlık istatistik güncellemesi
+        incrementLearnedToday(); // totalWords ve learnedToday artırır
+        await addXP(10); // Kelime başına 10 XP
+        
+        // Haftalık aktiviteyi güncelle
+        _updateWeeklyActivityForToday();
+        
         notifyListeners();
       }
       return newWord;
@@ -220,6 +230,22 @@ class AppStateProvider extends ChangeNotifier {
       return null;
     }
   }
+  
+  /// Bugünün haftalık aktivitesini güncelle
+  void _updateWeeklyActivityForToday() {
+    final now = DateTime.now();
+    final dayIndex = now.weekday - 1; // 0=Mon, 6=Sun
+    
+    if (_weeklyActivity.isNotEmpty && dayIndex < _weeklyActivity.length) {
+      final currentCount = (_weeklyActivity[dayIndex]['count'] as int? ?? 0) + 1;
+      _weeklyActivity[dayIndex] = {
+        'day': _weeklyActivity[dayIndex]['day'],
+        'learned': true,
+        'count': currentCount,
+      };
+    }
+  }
+
 
   /// Kelime sil
   Future<bool> deleteWord(int wordId) async {
@@ -297,6 +323,45 @@ class AppStateProvider extends ChangeNotifier {
   Future<void> refreshSentences() async {
     await _loadSentences();
   }
+  
+  /// Kelimeye cümle ekle ve listeyi güncelle
+  /// XP otomatik eklenir
+  Future<Word?> addSentenceToWord({
+    required int wordId,
+    required String sentence,
+    required String translation,
+    String difficulty = 'easy',
+  }) async {
+    try {
+      final updatedWord = await _offlineSyncService.addSentenceToWord(
+        wordId: wordId,
+        sentence: sentence,
+        translation: translation,
+        difficulty: difficulty,
+      );
+      
+      if (updatedWord != null) {
+        // Kelime listesini güncelle
+        final index = _allWords.indexWhere((w) => w.id == wordId);
+        if (index != -1) {
+          _allWords[index] = updatedWord;
+        }
+        
+        // XP ekle (cümle başına 5 XP)
+        await addXP(5);
+        
+        // Cümle listesini yenile
+        await _loadSentences();
+        
+        notifyListeners();
+      }
+      return updatedWord;
+    } catch (e) {
+      print('Error adding sentence: $e');
+      return null;
+    }
+  }
+
 
   // ═══════════════════════════════════════════════════════════════
   // DAILY WORDS (Günün Kelimeleri - AI Generated)
@@ -348,6 +413,25 @@ class AppStateProvider extends ChangeNotifier {
   // XP & STATS UPDATES
   // ═══════════════════════════════════════════════════════════════
   
+  /// Kullanıcı istatistiklerini manuel güncelle
+  void updateUserStats(Map<String, dynamic> newStats) {
+    if (newStats.isEmpty) return;
+    
+    newStats.forEach((key, value) {
+      if (value != null) {
+        _userStats[key] = value;
+      }
+    });
+    
+    notifyListeners();
+  }
+
+  /// Haftalık aktivite verisini güncelle
+  void updateWeeklyActivity(List<Map<String, dynamic>> activity) {
+    _weeklyActivity = activity;
+    notifyListeners();
+  }
+  
   /// XP ekle ve state'i güncelle
   Future<void> addXP(int amount) async {
     try {
@@ -356,7 +440,7 @@ class AppStateProvider extends ChangeNotifier {
       notifyListeners();
       
       // Arka planda gerçek veriyi kaydet
-      // await _userDataService.addXP(amount);
+      await _offlineSyncService.addXp(amount);
     } catch (e) {
       print('Error adding XP: $e');
     }

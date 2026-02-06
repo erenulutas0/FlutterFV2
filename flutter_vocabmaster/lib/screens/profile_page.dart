@@ -16,6 +16,9 @@ import '../providers/app_state_provider.dart';
 import 'login_page.dart';
 import '../widgets/modern_card.dart';
 import '../widgets/modern_background.dart';
+import '../services/subscription_service.dart';
+import 'subscription_page.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({Key? key}) : super(key: key);
@@ -59,6 +62,7 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _hasApiKey = false;
   bool _useOwnKey = false;
   ApiKeyStatus? _apiKeyStatus;
+  
 
   @override
   void initState() {
@@ -69,10 +73,22 @@ class _ProfilePageState extends State<ProfilePage> {
       _loadFromProvider();
     });
     
-    _loadProfileImageSettings();
-    _handleLostData();
     _loadApiKeyStatus();
     _loadFriends(); // Arkadaşları ayrıca yükle
+    _loadSubscriptionInfo();
+  }
+
+  void _loadSubscriptionInfo() async {
+    try {
+      final status = await SubscriptionService().getUserSubscriptionStatus();
+      if (mounted) {
+        setState(() {
+          _user = {...?_user, ...status};
+        });
+      }
+    } catch (e) {
+      debugPrint('Abonelik yükleme hatası: $e');
+    }
   }
 
   void _loadFromProvider() {
@@ -100,11 +116,31 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _loadUserInfo() async {
     final authService = AuthService();
-    final user = await authService.getUser();
+    var user = await authService.getUser();
+
+    // Force refresh subscription status from backend
+    try {
+      final subStatus = await SubscriptionService().getUserSubscriptionStatus();
+      if (user != null) {
+        final updatedUser = Map<String, dynamic>.from(user);
+        updatedUser.addAll(subStatus);
+        user = updatedUser;
+        
+        // Update persistent cache
+        await authService.updateUser(user);
+      }
+    } catch (e) {
+      debugPrint('Abonelik durumu yenilenirken hata: $e');
+    }
+
     if (mounted && user != null) {
       setState(() {
         _user = user;
       });
+      // Update global state
+      if (mounted) {
+        context.read<AppStateProvider>().refreshUserData();
+      }
     }
   }
 
@@ -382,38 +418,6 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
-  Future<void> _handleLogout() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1e293b),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Çıkış Yap', style: TextStyle(color: Colors.white)),
-        content: const Text('Hesabınızdan çıkmak istediğinize emin misiniz?', style: TextStyle(color: Colors.white70)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('İptal', style: TextStyle(color: Colors.white54)),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Çıkış Yap', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      await AuthService().logout();
-        if (mounted) {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (context) => const LoginPage()),
-            (route) => false,
-          );
-        }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -440,11 +444,11 @@ class _ProfilePageState extends State<ProfilePage> {
                   const SizedBox(height: 24),
                   _buildThemeSelection(),
                   const SizedBox(height: 24),
-                  _buildApiSettings(),
-                  const SizedBox(height: 24),
+                  // _buildApiSettings(),
+                  // const SizedBox(height: 24),
                   _buildAccountSettings(),
-                  const SizedBox(height: 24),
-                  _buildFriendsSection(),
+                  // const SizedBox(height: 24),
+                  // _buildFriendsSection(),
                   const SizedBox(height: 32),
                   _buildLogoutButton(),
                   const SizedBox(height: 40),
@@ -457,7 +461,8 @@ class _ProfilePageState extends State<ProfilePage> {
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const GlobalMatchmakingSheet(),
+          // MVP: GlobalMatchmakingSheet disabled for v1.0
+          // const GlobalMatchmakingSheet(),
           BottomNav(
             currentIndex: -1, 
             onTap: (index) {
@@ -567,11 +572,13 @@ class _ProfilePageState extends State<ProfilePage> {
     } else if (_profileImageType == 'initials') {
       return _buildInitialsWidget(displayName);
     } else {
-      return Image.network(
-        'https://api.dicebear.com/7.x/avataaars/png?seed=${_avatarSeed ?? displayName}',
+      return CachedNetworkImage(
+        imageUrl: 'https://api.dicebear.com/7.x/avataaars/png?seed=${_avatarSeed ?? displayName}',
         fit: BoxFit.cover,
         width: double.infinity,
         height: double.infinity,
+        placeholder: (context, url) => const Center(child: CircularProgressIndicator(color: Color(0xFF0ea5e9), strokeWidth: 2)),
+        errorWidget: (context, url, error) => _buildInitialsWidget(displayName),
       );
     }
   }
@@ -596,13 +603,11 @@ class _ProfilePageState extends State<ProfilePage> {
       return _buildInitialsWidget(displayName);
     } else {
       // Default avatar
-      return Image.network(
-        'https://api.dicebear.com/7.x/avataaars/png?seed=${_avatarSeed ?? displayName}',
+      return CachedNetworkImage(
+        imageUrl: 'https://api.dicebear.com/7.x/avataaars/png?seed=${_avatarSeed ?? displayName}',
         fit: BoxFit.cover,
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          return const Center(child: CircularProgressIndicator(color: Color(0xFF0ea5e9), strokeWidth: 2));
-        },
+        placeholder: (context, url) => const Center(child: CircularProgressIndicator(color: Color(0xFF0ea5e9), strokeWidth: 2)),
+        errorWidget: (context, url, error) => _buildInitialsWidget(displayName),
       );
     }
   }
@@ -630,8 +635,8 @@ class _ProfilePageState extends State<ProfilePage> {
     final email = _user?['email'] ?? '';
     final level = _user?['level'] ?? 1;
     final totalXp = _user?['totalXp'] ?? 0;
-    final currentStreak = _user?['currentStreak'] ?? 0;
-    final wordsLearned = _user?['wordsLearned'] ?? 0;
+    // final currentStreak = _user?['currentStreak'] ?? 0; // Not used locally if using stats map
+    // final wordsLearned = _user?['wordsLearned'] ?? 0;   // Not used locally
 
     // XP hesaplama
     final xpThresholds = [0, 100, 250, 500, 1000, 2000, 3500, 5500, 8000, 11000, 15000];
@@ -640,6 +645,9 @@ class _ProfilePageState extends State<ProfilePage> {
     final xpProgress = totalXp - currentLevelXp;
     final xpNeeded = nextLevelXp - currentLevelXp;
     final progressValue = xpNeeded > 0 ? xpProgress / xpNeeded : 0.0;
+    final xpRemaining = nextLevelXp - totalXp;
+
+    final isPro = _user?['subscriptionEndDate'] != null;
 
     return ModernCard(
       padding: const EdgeInsets.all(24),
@@ -653,13 +661,28 @@ class _ProfilePageState extends State<ProfilePage> {
               GestureDetector(
                 onTap: () => _showFullImage(displayName),
                 child: Container(
-                  width: 100,
-                  height: 100,
+                  width: 110,
+                  height: 110,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1e293b),
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: Colors.white.withOpacity(0.1)),
+                    borderRadius: BorderRadius.circular(28),
+                    // PRO gradient ring for subscribers
+                    gradient: isPro
+                        ? const LinearGradient(
+                            colors: [Color(0xFFFFD700), Color(0xFFFFA500), Color(0xFFFF8C00)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          )
+                        : null,
+                    border: !isPro
+                        ? Border.all(color: Colors.white.withOpacity(0.1), width: 3)
+                        : null,
                     boxShadow: [
+                      if (isPro)
+                        BoxShadow(
+                          color: const Color(0xFFFFD700).withOpacity(0.4),
+                          blurRadius: 15,
+                          spreadRadius: 2,
+                        ),
                       BoxShadow(
                         color: Colors.black.withOpacity(0.2),
                         blurRadius: 10,
@@ -667,12 +690,42 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                     ],
                   ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(24),
-                    child: _buildProfileImageWidget(displayName),
+                  padding: const EdgeInsets.all(4),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1e293b),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(24),
+                      child: _buildProfileImageWidget(displayName),
+                    ),
                   ),
                 ),
               ),
+              // PRO Crown Badge for subscribers
+              if (isPro)
+                Positioned(
+                  top: -8,
+                  right: -8,
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFFD700), Color(0xFFFFA500)],
+                      ),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: const Color(0xFF111827), width: 2),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFFFD700).withOpacity(0.5),
+                          blurRadius: 8,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.workspace_premium, color: Colors.white, size: 16),
+                  ),
+                ),
               Positioned(
                 bottom: -2,
                 right: -2,
@@ -727,82 +780,93 @@ class _ProfilePageState extends State<ProfilePage> {
               fontWeight: FontWeight.bold,
             ),
           ),
+          // UserTag GİZLENDİ (Backend'de mevcut)
+          /*
           const SizedBox(height: 4),
-          // UserTag - Discord tarzı
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF06b6d4), Color(0xFF3b82f6)],
-              ),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              userTag,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            email,
-            style: const TextStyle(
-              color: Color(0xFF38bdf8),
-              fontSize: 14,
-            ),
-          ),
-          const SizedBox(height: 12),
-          GestureDetector(
-            onTap: _copyUserTag,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0369a1).withOpacity(0.3),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.copy, color: Color(0xFF7dd3fc), size: 14),
-                  const SizedBox(width: 6),
-                  Text(
-                    'ID\'yi kopyala: $userTag',
-                    style: const TextStyle(color: Color(0xFF7dd3fc), fontSize: 12),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+               Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF06b6d4), Color(0xFF3b82f6)],
                   ),
-                ],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  userTag,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(width: 8),
+               // Copy tag button
+               GestureDetector(
+                onTap: _copyUserTag,
+                child: Icon(Icons.copy, color: Colors.white.withOpacity(0.5), size: 16),
+               )
+            ],
           ),
-          const SizedBox(height: 16),
-          OutlinedButton.icon(
-            onPressed: () {},
-            icon: const Icon(Icons.verified_user_outlined, size: 18),
-            label: const Text('Hesabı Doğrula'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFF10b981),
-              side: const BorderSide(color: Color(0xFF10b981)),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
+          */
+          const SizedBox(height: 8),
+          
+          // Subscription Status
+          if (!isPro) ...[
+            const SizedBox(height: 8),
+             Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.verified_user_outlined, color: Colors.white54, size: 16),
+                    const SizedBox(width: 6),
+                    const Text(
+                      'Ücretsiz Plan',
+                      style: TextStyle(color: Colors.white54, fontSize: 14),
+                    ),
+                  ],
+               ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: () async {
+                   await Navigator.push(context, MaterialPageRoute(builder: (context) => const SubscriptionPage()));
+                   if (mounted) _loadUserInfo(); // Reload after return
+                },
+                icon: const Icon(Icons.flash_on, size: 18),
+                label: const Text('PRO\'ya Yükselt'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF22D3EE),
+                  foregroundColor: Colors.black,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                ),
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            ),
-          ),
+          ] else ...[
+             const SizedBox(height: 8),
+             Container(
+               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+               decoration: BoxDecoration(
+                 color: const Color(0xFFFFD700).withOpacity(0.2),
+                 borderRadius: BorderRadius.circular(20),
+                 border: Border.all(color: const Color(0xFFFFD700).withOpacity(0.5)),
+               ),
+               child: const Row(
+                 mainAxisSize: MainAxisSize.min,
+                 children: [
+                   Icon(Icons.workspace_premium, color: Color(0xFFFFD700), size: 16),
+                   SizedBox(width: 6),
+                   Text('PRO Üye', style: TextStyle(color: Color(0xFFFFD700), fontWeight: FontWeight.bold)),
+                 ],
+               ),
+             )
+          ],
+          
           const SizedBox(height: 24),
-          Builder(
-            builder: (context) {
-              // XP hesaplama - gerçek veriler
-              final xpThresholds = [0, 100, 250, 500, 1000, 2000, 3500, 5500, 8000, 11000, 15000];
-              final currentLevelXp = _level <= 10 ? xpThresholds[_level - 1] : 15000 + ((_level - 11) * 5000);
-              final nextLevelXp = _level <= 10 ? xpThresholds[_level] : 15000 + ((_level - 10) * 5000);
-              final xpProgress = _totalXp - currentLevelXp;
-              final xpNeeded = nextLevelXp - currentLevelXp;
-              final progressValue = xpNeeded > 0 ? xpProgress / xpNeeded : 0.0;
-              final xpRemaining = nextLevelXp - _totalXp;
-
-              return Container(
+          
+          // XP Bar Progress
+          Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.05),
@@ -814,12 +878,12 @@ class _ProfilePageState extends State<ProfilePage> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
+                         const Text(
                           'XP İlerlemesi',
                           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                         ),
                         Text(
-                          '$_totalXp / $nextLevelXp',
+                          '$totalXp / $nextLevelXp',
                           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                         ),
                       ],
@@ -835,29 +899,29 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Text(
+                     Text(
                       'Sonraki seviyeye $xpRemaining XP kaldı',
                       style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12),
                     ),
                   ],
                 ),
-              );
-            },
-          ),
+              ),
+              
           const SizedBox(height: 24),
           Row(
             children: [
-              Expanded(child: _buildStatItem(Icons.emoji_events_outlined, _totalWords.toString(), 'Toplam\nKelime', const Color(0xFF0ea5e9))),
+              Expanded(child: _buildStatItem(Icons.emoji_events_outlined, '$_totalWords', 'Toplam\nKelime', const Color(0xFF0ea5e9))),
               const SizedBox(width: 12),
-              Expanded(child: _buildStatItem(Icons.calendar_today_outlined, _streak.toString(), 'Gün Serisi', const Color(0xFF0ea5e9))),
+              Expanded(child: _buildStatItem(Icons.calendar_today_outlined, '$_streak', 'Gün Serisi', const Color(0xFF0ea5e9))),
               const SizedBox(width: 12),
-              Expanded(child: _buildStatItem(Icons.military_tech_outlined, _level.toString(), 'Seviye', const Color(0xFF0ea5e9))),
+              Expanded(child: _buildStatItem(Icons.military_tech_outlined, '$_level', 'Seviye', const Color(0xFF0ea5e9))),
             ],
           ),
         ],
       ),
     );
   }
+
 
   Widget _buildStatItem(IconData icon, String value, String label, Color color) {
     return Container(
@@ -1351,6 +1415,7 @@ class _ProfilePageState extends State<ProfilePage> {
      );
   }
 
+  // ignore: unused_element
   Widget _buildFriendsSection() {
     final onlineFriends = _friends.where((f) => f['isOnline'] == true).toList();
     final offlineFriends = _friends.where((f) => f['isOnline'] != true).toList();
@@ -1518,6 +1583,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
   // ==================== API Settings (BYOK) ====================
 
+  // ignore: unused_element
   Widget _buildApiSettings() {
     final statusColor = _apiKeyStatus?.source == ApiKeySource.userProvided
         ? const Color(0xFF10b981)
@@ -2025,6 +2091,37 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
       ),
     );
+  }
+
+
+  Future<void> _handleLogout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1e293b),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Çıkış Yap', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: const Text('Hesabınızdan çıkış yapmak istediğinize emin misiniz?', style: TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('İptal', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFef4444), foregroundColor: Colors.white),
+            child: const Text('Çıkış Yap'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+       await AuthService().logout();
+       if (mounted) {
+         Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+       }
+    }
   }
 
   Widget _buildLogoutButton() {

@@ -27,6 +27,9 @@ class FriendshipServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private NotificationService notificationService;
+
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);

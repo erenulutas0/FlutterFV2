@@ -1,8 +1,9 @@
 import 'dart:ui';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../models/word.dart';
-import '../services/offline_sync_service.dart';
+import '../providers/app_state_provider.dart';
 
 class AddSentenceModal extends StatefulWidget {
   final Word word;
@@ -40,7 +41,7 @@ class _AddSentenceModalState extends State<AddSentenceModal>
   List<Offset>? _sparklePositions;
   
   List<SentenceData> sentences = [SentenceData()];
-  final OfflineSyncService _offlineSyncService = OfflineSyncService();
+  // OfflineSyncService kaldırıldı - AppStateProvider kullanılıyor
   bool _isSavePressed = false;
   bool _isSaving = false;
 
@@ -99,8 +100,11 @@ class _AddSentenceModalState extends State<AddSentenceModal>
     setState(() => _isSaving = true);
 
     try {
+      final appState = context.read<AppStateProvider>();
+      
       for (var s in validSentences) {
-        await _offlineSyncService.addSentenceToWord(
+        // AppStateProvider ile ekle (XP ve refresh otomatik)
+        await appState.addSentenceToWord(
           wordId: widget.word.id,
           sentence: s.englishController.text.trim(),
           translation: s.turkishController.text.trim(),
@@ -112,7 +116,7 @@ class _AddSentenceModalState extends State<AddSentenceModal>
         Navigator.pop(context);
         widget.onSentencesAdded();
         ScaffoldMessenger.of(context).showSnackBar(
-           SnackBar(content: Text('${validSentences.length} cümle başarıyla eklendi!'), backgroundColor: Colors.green),
+           SnackBar(content: Text('${validSentences.length} cümle başarıyla eklendi! (+${validSentences.length * 5} XP)'), backgroundColor: Colors.green),
         );
       }
     } catch (e) {
@@ -125,6 +129,7 @@ class _AddSentenceModalState extends State<AddSentenceModal>
       if (mounted) setState(() => _isSaving = false);
     }
   }
+
 
   @override
   Widget build(BuildContext context) {

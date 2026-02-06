@@ -2,6 +2,7 @@ package com.ingilizce.calismaapp.entity;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
+import java.util.Random;
 
 @Entity
 @Table(name = "users")
@@ -14,8 +15,15 @@ public class User {
     @Column(nullable = false, unique = true)
     private String email;
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     @Column(nullable = false)
     private String passwordHash;
+
+    @Column(name = "display_name", nullable = false)
+    private String displayName;
+
+    @Column(name = "user_tag", nullable = false)
+    private String userTag;
 
     @Column(name = "subscription_end_date")
     private LocalDateTime subscriptionEndDate;
@@ -24,8 +32,11 @@ public class User {
     @Column(nullable = false)
     private Role role = Role.USER;
 
-    @Column(name = "created_at")
+    @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    @Column(name = "last_seen_at")
+    private LocalDateTime lastSeenAt;
 
     public enum Role {
         USER,
@@ -34,13 +45,38 @@ public class User {
 
     public User() {
         this.createdAt = LocalDateTime.now();
+        this.userTag = generateUserTag();
     }
 
     public User(String email, String passwordHash) {
         this.email = email;
         this.passwordHash = passwordHash;
+        this.displayName = extractNameFromEmail(email);
+        this.userTag = generateUserTag();
         this.createdAt = LocalDateTime.now();
         this.role = Role.USER;
+    }
+
+    public User(String email, String passwordHash, String displayName) {
+        this.email = email;
+        this.passwordHash = passwordHash;
+        this.displayName = displayName != null ? displayName : extractNameFromEmail(email);
+        this.userTag = generateUserTag();
+        this.createdAt = LocalDateTime.now();
+        this.role = Role.USER;
+    }
+
+    private String extractNameFromEmail(String email) {
+        if (email == null || !email.contains("@")) {
+            return "User";
+        }
+        return email.substring(0, email.indexOf("@"));
+    }
+
+    private String generateUserTag() {
+        Random random = new Random();
+        int tagNumber = 10000 + random.nextInt(90000); // 5 digit number
+        return "#" + tagNumber;
     }
 
     // Getters and Setters
@@ -69,6 +105,22 @@ public class User {
         this.passwordHash = passwordHash;
     }
 
+    public String getDisplayName() {
+        return displayName;
+    }
+
+    public void setDisplayName(String displayName) {
+        this.displayName = displayName;
+    }
+
+    public String getUserTag() {
+        return userTag;
+    }
+
+    public void setUserTag(String userTag) {
+        this.userTag = userTag;
+    }
+
     public LocalDateTime getSubscriptionEndDate() {
         return subscriptionEndDate;
     }
@@ -93,8 +145,23 @@ public class User {
         this.createdAt = createdAt;
     }
 
+    public LocalDateTime getLastSeenAt() {
+        return lastSeenAt;
+    }
+
+    public void setLastSeenAt(LocalDateTime lastSeenAt) {
+        this.lastSeenAt = lastSeenAt;
+    }
+
     // Helper method to check active subscription
     public boolean isSubscriptionActive() {
         return subscriptionEndDate != null && subscriptionEndDate.isAfter(LocalDateTime.now());
+    }
+
+    // Helper method to check if user is online (active within last 5 minutes)
+    public boolean isOnline() {
+        if (lastSeenAt == null)
+            return false;
+        return lastSeenAt.isAfter(LocalDateTime.now().minusMinutes(5));
     }
 }

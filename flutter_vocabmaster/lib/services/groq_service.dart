@@ -1,5 +1,7 @@
 import '../models/writing_practice_models.dart';
 import 'groq_api_client.dart';
+import '../models/exam_models.dart';
+import '../constants/exam_word_lists.dart';
 
 /// Direkt Groq API ile iletişim kuran servis 
 /// Sözlük kelime araması için kullanılır
@@ -347,6 +349,275 @@ JSON Format:
     } catch (e) {
       print('Error evaluating writing: $e');
       rethrow;
+    }
+  }
+
+  /// YDS/YÖKDİL sınavı üretir - BASİTLEŞTİRİLMİŞ VERSİYON
+  static Future<ExamBundle> generateExamBundle({
+    required String examType, // YDS or YOKDIL (Artık sadece başlık olarak)
+    required String mode, // Geriye uyumluluk için, artık hep 'category' gibi davranır
+    String? category, // Hangi konudan olacağı (Zorunlu)
+    int questionCount = 10,
+    String? track, // Geriye uyumluluk için (Kullanılmıyor)
+    String userLevel = "B2",
+    String targetScore = "60-80",
+  }) async {
+    
+    // Rastgelelik ve Çeşitlilik İçin Gizli Konu İlhamı
+    final seed = DateTime.now().millisecondsSinceEpoch;
+    
+    // Geniş Akademik Konu Havuzu (İlham verici konular)
+    final allTopics = [
+      'Artificial Intelligence', 'Climate Change', 'Ancient History', 'Quantum Physics', 
+      'Neuroscience', 'Art History', 'Global Economics', 'Marine Biology', 
+      'Space Exploration', 'Psychology', 'Modern Architecture', 'Cybersecurity', 
+      'Nanotechnology', 'Sociology', 'International Law', 'Nutritional Science',
+      'Astronomy', 'Education Systems', 'Digital Marketing', 'Sustainable Agriculture',
+      'Geology', 'Linguistics', 'Urban Planning', 'Philosophy', 'World Literature', 
+      'Renewable Energy', 'Genetics', 'Alternative Medicine', 'Anthropology', 'Archaeology'
+    ];
+    
+    // Listeyi karıştır ve 2-3 tane seç (İlham için)
+    final shuffledTopics = List<String>.from(allTopics)..shuffle();
+    final inspirationTopics = shuffledTopics.take(3).join(', ');
+
+    // KELİME HAVUZU SEÇİMİ VE ENTEGRASYON STRATEJİSİ
+    String targetVocabPrompt = "";
+    
+    // Rastgele kelime seçimi
+    final phrasals = (List<String>.from(ExamWordLists.phrasalVerbs)..shuffle()).take(12).join(', ');
+    final words = (List<String>.from(ExamWordLists.academicWords)..shuffle()).take(15).join(', ');
+
+    // STRATEJİ 1: Şıkların bizzat kelime olduğu türler (Vocabulary, Cloze Test)
+    if (category == 'vocabulary' || category == 'cloze_test') {
+      targetVocabPrompt = '''
+*** ZORUNLU KELİME KULLANIMI (ŞIKLARDA) ***
+Aşağıdaki kelimeleri soruların DOĞRU CEVABI veya ÇELDİRİCİSİ olarak kullan:
+- PHRASAL VERBS: $phrasals
+- ACADEMIC WORDS: $words
+''';
+    } 
+    // STRATEJİ 2: Şıkların CÜMLE olduğu türler (Paragraf/Cümle Tamamlama, Reading)
+    // Burada kelimeler şık değil, metnin veya cümlenin PARÇASI olmalı.
+    else if (category == 'sentence_completion' || 
+             category == 'paragraph_completion' || 
+             category == 'reading') {
+      targetVocabPrompt = '''
+*** ZORUNLU KELİME KULLANIMI (BAĞLAM İÇİNDE) ***
+Aşağıdaki kelimeleri oluşturduğun metinlerin, paragrafların veya cümlelerin İÇİNDE geçir.
+(NOT: Şıklar yine de tam cümle olmalı, sadece bu kelimeleri içersin):
+- KELİME HAVUZU: $phrasals, $words
+''';
+    }
+
+    // Category display names for prompt
+    final categoryNames = {
+      'grammar': 'Grammar (Tense/Voice, Bağlaçlar)',
+      'vocabulary': 'Vocabulary (Phrasal Verbs, Academic Words)',
+      'sentence_completion': 'Sentence Completion (Cümle Tamamlama)',
+      'translation': 'Translation (Çeviri - İng↔Tr)',
+      'paragraph_completion': 'Paragraph Completion (Paragraf Tamamlama)',
+      'irrelevant_sentence': 'Irrelevant Sentence (Anlam Bozanı Bul)',
+      'reading': 'Reading Comprehension (Okuma Parçası)',
+      'cloze_test': 'Cloze Test (Paragraf Boşluk Doldurma)',
+    };
+
+    final catName = categoryNames[category] ?? category ?? 'Genel';
+    
+    final categoryPrompt = '''
+SADECE "$catName" kategorisinden $questionCount adet YENİ ve ÖZGÜN soru üret.
+KONU: Genel Akademik (Herhangi bir kısıtlama yok, ancak çeşitlilik için şu konulardan İLHAM alabilirsin: $inspirationTopics).
+
+$targetVocabPrompt
+
+ÖNEMLİ: Daha önce sorulmamış, özgün sorular üret. Sorular birbirini tekrar etmesin.
+
+KATEGORİ DETAYLARI:
+${_getCategoryDetails(category ?? 'grammar')}
+''';
+
+    final systemContent = """Sen profesyonel bir YDS/YÖKDİL sınav uzmanısın.
+Görevin, belirtilen formatta tamamen ÖZGÜN, YENİ ve AKADEMİK sorular üretmektir.
+
+KURALLAR:
+1. **DİL: Sorular, metinler ve şıklar TAMAMEN İNGİLİZCE olmalı.** (Sadece 'Translation' kategorisi hariç).
+2. ASLA Prompt içindeki örnek soruları çıktı olarak verme. Her seferinde sıfırdan düşün.
+3. Her soru 5 şık (A, B, C, D, E) içermeli.
+4. SADECE BİR doğru cevap olmalı.
+5. Çeldiriciler güçlü olmalı.
+6. Çıktı SADECE geçerli JSON olmalı.
+
+Seviye: C1 (Advanced)
+""";
+
+    final userContent = """YDS/YÖKDİL Sınav Simülasyonu ($questionCount Soru).
+Random Seed: $seed (Her seferinde farklı sorular üret)
+
+$categoryPrompt
+
+Kullanıcı Profili:
+- Seviye: $userLevel
+- Hedef Puan: $targetScore
+
+JSON ÇIKTI FORMATI:
+{
+  "meta": {
+    "exam": "$examType",
+    "mode": "category",
+    "category": "$category",
+    "track": "general",
+    "user_level_cefr": "$userLevel",
+    "target_score_band": "$targetScore",
+    "time_limit_minutes": ${questionCount * 2},
+    "total_questions": $questionCount
+  },
+  "sections": [
+    {
+      "name": "Generated Test",
+      "items": [
+        {
+          "id": "q_${seed}_1",
+          "type": "${category ?? 'mixed'}",
+          "difficulty": "hard",
+          "skill_tags": [],
+          "stem": "Question text (ENGLISH)...",
+          "passage": null, 
+          "options": {"A":"Answer A (ENGLISH)...","B":"...","C":"...","D":"...","E":"..."},
+          "correct": "A",
+          "explanation_tr": "Türkçe Açıklama",
+          "explanation_en": "English Explanation"
+        }
+      ]
+    }
+  ]
+}
+""";
+
+    try {
+      final result = await GroqApiClient.getJsonResponse(
+        messages: [
+          {'role': 'system', 'content': systemContent},
+          {'role': 'user', 'content': userContent}
+        ],
+        temperature: 0.85, 
+        maxTokens: 4000, 
+        timeout: Duration(seconds: 60 + (questionCount * 3)), 
+      );
+      
+      return ExamBundle.fromJson(result);
+    } catch (e) {
+      print('Error generating exam: $e');
+      rethrow;
+    }
+  }
+
+  /// Kategori detaylarını döndürür
+  static String _getCategoryDetails(String category) {
+    switch (category) {
+      case 'grammar':
+        return '''
+Grammar Soruları FORMATI:
+- DİL: TAMAMEN İNGİLİZCE.
+- Soru Tipi: Tense, Modal, Passive Voice, IF Clauses, Noun Clauses.
+- Yapı: MUTLAKA İKİ BOŞLUKLU (---- ... ----) uzun akademik cümleler.
+- Şıklar: "fiil1 / fiil2" formatında.
+
+(REFERANS ÖRNEK - AYNISINI YAZMA):
+"It ---- that life on Earth ---- about 4 billion years ago." (Cevap: is believed / started)
+''';
+
+      case 'vocabulary':
+        return '''
+Vocabulary Soruları FORMATI:
+- DİL: TAMAMEN İNGİLİZCE.
+- Soru Tipi: Phrasal Verbs veya Akademik Kelimeler.
+- Yapı: Cümle içinde TEK BOŞLUK (----).
+- ASLA "What is the meaning of..." diye sorma. Boşluk doldurma sor.
+
+(REFERANS ÖRNEK - AYNISINI YAZMA):
+"The moon maps are incomplete but it is hoped that the 2008 lunar orbiter will ---- the gaps for us." (Cevap: fill in)
+''';
+
+      case 'sentence_completion':
+        return '''
+Sentence Completion FORMATI:
+- DİL: TAMAMEN İNGİLİZCE (TÜRKÇE ASLA KULLANMA).
+- **BOŞLUK KONUMU:** ÇEŞİTLİLİK ZORUNLUDUR.
+    - Soruların yarısında boşluk **SONDA** olsun ("Although X happens, ----.").
+    - Soruların yarısında boşluk **BAŞTA** olsun ("----, because the weather was bad.").
+    - Bazen de **ORTADA** bir kısmı boş bırakabilirsin.
+- **YAPI:** Akademik, bağlaçlı (conjunction) uzun cümleler.
+- **ŞIKLAR:** Boşluğu tamamlayan TAM ve ANLAMLI cümlecikler olmalı.
+
+(REFERANS - BAŞTA BOŞLUK):
+"----, even though the evidence was not entirely conclusive." (Cevap: The jury decided to convict the defendant)
+
+(REFERANS - SONDA BOŞLUK):
+"Unless the government takes immediate action, ----." (Cevap: the economic crisis will deepen further.)
+''';
+
+      case 'translation':
+        return '''
+Translation FORMATI:
+- Yarısı İngilizce -> Türkçe, Yarısı Türkçe -> İngilizce.
+- Cümleler uzun ve akademik olmalı.
+- Şıklar birbirine çok yakın (zaman, özne farkı) olmalı.
+''';
+
+      case 'paragraph_completion':
+        return '''
+Paragraph Completion FORMATI:
+- DİL: TAMAMEN İNGİLİZCE (TÜRKÇE ASLA KULLANMA).
+- **BOŞLUK KONUMU:** ÇEŞİTLİLİK ZORUNLUDUR. Soruların:
+    - %33'ünde boşluk EN BAŞTA (Giriş cümlesi),
+    - %33'ünde boşluk ORTADA (Gelişme/Geçiş cümlesi),
+    - %33'ünde boşluk SONDA (Sonuç cümlesi) olmalı.
+- **YAPI:** 4-6 cümlelik yoğun akademik bir paragraf.
+- **MANTIK:** Boş bırakılan cümle, kendisinden önceki veya sonraki cümlelerle anlamsal bağ (reference words, conjunctions) içermeli.
+
+(REFERANS - ORTADA BOŞLUK):
+"Otto Lehmann observed that liquid crystals are remarkably sensitive. ---- Further, they can register minute fluctuations in temperature." (Cevap: They respond to heat, light, sound, and electromagnetic fields)
+
+(REFERANS - BAŞTA BOŞLUK):
+"---- However, this is not the case for all species. Some have evolved to survive in extreme conditions." (Cevap: Most animals require moderate temperatures to thrive.)
+''';
+
+      case 'irrelevant_sentence':
+        return '''
+Irrelevant Sentence FORMATI:
+- DİL: TAMAMEN İNGİLİZCE.
+- Romen rakamlarıyla (I), (II), (III), (IV), (V) işaretlenmiş 5 cümle.
+- Bir cümle konu akışını bozmalı.
+''';
+
+      case 'reading':
+        return '''
+Reading Comprehension FORMATI:
+- DİL: TAMAMEN İNGİLİZCE.
+- 150-200 kelimelik yoğun akademik paragraf.
+- 3 veya 4 adet soru.
+- Sorular yorum, çıkarım ve detay içermeli.
+''';
+
+      case 'cloze_test':
+        return '''
+Cloze Test FORMATI (YDS/YÖKDİL Standardı):
+1.  **YAPI:** Her 5 soru için BİR adet yoğun akademik paragraf (150-200 kelime) oluştur. (Örneğin 10 soru isteniyorsa 2 farklı paragraf).
+2.  **BOŞLUKLAR:** Paragraf içinde **(1), (2), (3), (4), (5)** şeklinde numaralanmış boşluklar bırak.
+3.  **İÇERİK DAĞILIMI (Her 5 soru seti için):**
+    -   Boşluk (1): Kelime Sorusu (User's Vocabulary List)
+    -   Boşluk (2): Gramer (Tense / Modals / Passive)
+    -   Boşluk (3): Bağlaç (Conjunctions / Transitions)
+    -   Boşluk (4): Preposition (in, on, at, with...) veya Phrasal Verb
+    -   Boşluk (5): Relative Clause veya Participle
+4.  **JSON ÇIKTISI:** Ürettiğin her sorunun (item) `passage` alanına bu paragrafın TAMAMINI olduğu gibi kopyala.
+5.  **SORU KÖKÜ:** Her sorunun `stem` alanına sadece "Choose the correct option to complete blank (X)." yaz.
+
+(Amaç: Görseldeki gibi tek bir paragraf üzerinden farklı dilbilgisi kurallarını test etmek).
+''';
+
+      default:
+        return 'Akademik formatta, C1 seviyesinde sorular üret.';
     }
   }
 }

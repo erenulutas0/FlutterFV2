@@ -495,7 +495,8 @@ class _ReviewPageState extends State<ReviewPage> {
           bottomNavigationBar: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const GlobalMatchmakingSheet(),
+              // MVP: GlobalMatchmakingSheet disabled for v1.0
+              // const GlobalMatchmakingSheet(),
               BottomNav(
                 currentIndex: -1, 
                 onTap: (index) {

@@ -9,70 +9,73 @@ import java.nio.file.Paths;
 import java.util.Base64;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.List;
+import java.util.ArrayList;
 
 @Service
 public class PiperTtsService {
-    
+
     @Value("${piper.tts.path:}")
     private String configuredPiperPath;
-    
+
     // --- KRİTİK DEĞİŞİKLİK BURADA ---
     // Modelleri Türkçe karakter sorunu olmaması için C:\piper klasöründen okuyoruz.
     // Docker'da /piper mount point'i kullanılır
-    private static final String MODEL_BASE_DIR = System.getProperty("os.name").toLowerCase().contains("windows") 
-        ? "C:\\piper" 
-        : "/piper"; 
-    
-    // Klasör yolları olmadan sadece dosya isimleri (Çünkü hepsi C:\piper içinde yan yana)
+    private static final String MODEL_BASE_DIR = System.getProperty("os.name").toLowerCase().contains("windows")
+            ? "C:\\piper"
+            : "/piper";
+
+    // Modellerin dosya isimleri (C:\piper klasöründe olmalı)
     private static final String MODEL_LESSAC = "en_US-lessac-medium.onnx";
     private static final String MODEL_AMY = "en_US-amy-medium.onnx";
     private static final String MODEL_ALAN = "en_GB-alan-medium.onnx";
-    
+    // Yeni eklenen modeller
+    private static final String MODEL_RYAN = "en_US-ryan-medium.onnx";
+    private static final String MODEL_JENNY = "en_GB-jenny_dioco-medium.onnx";
+    private static final String MODEL_CORI = "en_GB-cori-medium.onnx";
+
     /**
      * Generate speech audio from text using Piper TTS
-     * @param text Text to convert to speech
-     * @param voice Voice model to use (lessac, amy, alan)
+     * 
+     * @param text  Text to convert to speech
+     * @param voice Voice model to use (lessac, amy, alan, ryan, etc.)
      * @return Base64 encoded WAV audio data
      */
     public String synthesizeSpeech(String text, String voice) {
         try {
             // Select model based on voice
             String modelFile = getModelFile(voice);
-            
+
             // Create temporary output file
             String tempDir = System.getProperty("java.io.tmpdir");
             String outputFile = tempDir + File.separator + UUID.randomUUID().toString() + ".wav";
-            
+
             // Build Piper command - use absolute path for model file
             File modelFileObj = new File(modelFile);
             String absoluteModelPath = modelFileObj.getAbsolutePath();
-            
+
             // Verify model file exists
             if (!modelFileObj.exists()) {
                 throw new RuntimeException("Model file not found at SAFE path: " + absoluteModelPath);
             }
             System.out.println("Using SAFE model file: " + absoluteModelPath);
             System.out.println("Model file exists: " + modelFileObj.exists());
-            
+
             String piperPath = findPiperPath();
             System.out.println("Using Piper path: " + piperPath);
-            
-            ProcessBuilder processBuilder = new ProcessBuilder(
-                piperPath,
-                "--model", absoluteModelPath,
-                "--output_file", outputFile
-            );
-            
-            // Working directory is less important now since we use absolute paths, 
-            // but setting it to the model base directory ensures espeak-ng-data is found easily.
+
+            // Working directory setup moved here
             File workingDir = new File(MODEL_BASE_DIR);
-            if (workingDir.exists()) {
-                processBuilder.directory(workingDir);
-            }
-            
-            processBuilder.redirectErrorStream(true);
-            Process process = processBuilder.start();
-            
+
+            List<String> command = new ArrayList<>();
+            command.add(piperPath);
+            command.add("--model");
+            command.add(absoluteModelPath);
+            command.add("--output_file");
+            command.add(outputFile);
+
+            Process process = startProcess(command, workingDir);
+
             // Write text to process stdin and explicitly close it
             OutputStream stdin = process.getOutputStream();
             try (BufferedWriter writer = new BufferedWriter(
@@ -87,14 +90,15 @@ public class PiperTtsService {
                     System.err.println("Error closing stdin: " + e.getMessage());
                 }
             }
-            
+
             // Read output/error stream in a separate thread to prevent blocking
             StringBuilder output = new StringBuilder();
             final Process finalProcess = process;
-            
+
             Thread outputThread = new Thread(() -> {
                 try (BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(finalProcess.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                        new InputStreamReader(finalProcess.getInputStream(),
+                                java.nio.charset.StandardCharsets.UTF_8))) {
                     String line;
                     while ((line = reader.readLine()) != null) {
                         output.append(line).append("\n");
@@ -106,40 +110,41 @@ public class PiperTtsService {
             });
             outputThread.setDaemon(true);
             outputThread.start();
-            
+
             // Wait for process to complete with timeout (30 seconds)
             boolean finished = process.waitFor(30, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
                 throw new RuntimeException("Piper TTS process timed out after 30 seconds");
             }
-            
+
             outputThread.join(5000); // Wait max 5 seconds for output thread
-            
+
             int exitCode = process.exitValue();
-            
+
             if (exitCode != 0) {
-                String errorMsg = output.length() > 0 ? output.toString() : "Unknown error (exit code: " + exitCode + ")";
+                String errorMsg = output.length() > 0 ? output.toString()
+                        : "Unknown error (exit code: " + exitCode + ")";
                 System.err.println("Piper TTS failed with exit code: " + exitCode);
                 System.err.println("Piper output: " + errorMsg);
                 throw new RuntimeException("Piper TTS failed: " + errorMsg);
             }
-            
+
             // Read generated audio file
             Path audioPath = Paths.get(outputFile);
             byte[] audioData = Files.readAllBytes(audioPath);
-            
+
             // Clean up temporary file
             Files.deleteIfExists(audioPath);
-            
+
             // Return base64 encoded audio
             return Base64.getEncoder().encodeToString(audioData);
-            
+
         } catch (Exception e) {
             throw new RuntimeException("Failed to synthesize speech: " + e.getMessage(), e);
         }
     }
-    
+
     /**
      * Get model file path based on voice name
      */
@@ -147,9 +152,12 @@ public class PiperTtsService {
         if (voice == null || voice.isEmpty()) {
             voice = "amy"; // Default to amy since it's available
         }
-        
+
+        // Normalize voice name
+        String voiceName = voice.toLowerCase();
+
         String modelFileName;
-        switch (voice.toLowerCase()) {
+        switch (voiceName) {
             case "amy":
                 modelFileName = MODEL_AMY;
                 break;
@@ -159,27 +167,51 @@ public class PiperTtsService {
             case "lessac":
                 modelFileName = MODEL_LESSAC;
                 break;
+            case "ryan":
+                modelFileName = MODEL_RYAN;
+                break;
+            case "jenny_dioco":
+            case "jenny":
+                modelFileName = MODEL_JENNY;
+                break;
+            case "cori":
+                modelFileName = MODEL_CORI;
+                break;
             default:
-                // Fallback to amy if requested voice not found
+                // Fallback to amy if requested voice not found in config
+                System.out.println("Unknown voice requested: " + voice + ", using Amy");
                 modelFileName = MODEL_AMY;
                 break;
         }
-        
+
         // Construct full path: C:\piper + \ + en_US-amy-medium.onnx
         String fullPath = MODEL_BASE_DIR + File.separator + modelFileName;
-        
-        // Check if file exists, if not fallback to amy
+
+        // Check if file exists, if not fallback
         File modelFile = new File(fullPath);
         if (!modelFile.exists()) {
-            System.out.println("Model not found: " + fullPath + ", falling back to amy");
+            System.out.println("Model not found: " + fullPath);
+
+            // SMART FALLBACK: Cinsiyete göre yedekleme
+            if (voiceName.equals("ryan") || voiceName.equals("alan")) {
+                // Erkek sesi istendi ama bulunamadı -> Varsa diğer erkek sesini dene (önce
+                // Alan)
+                String alanPath = MODEL_BASE_DIR + File.separator + MODEL_ALAN;
+                if (new File(alanPath).exists()) {
+                    System.out.println("Falling back to ALAN (Male) for missing male voice");
+                    return alanPath;
+                }
+            }
+
+            // Son çare AMY (Kadın)
+            System.out.println("Falling back to AMY (Default)");
             fullPath = MODEL_BASE_DIR + File.separator + MODEL_AMY;
-            modelFile = new File(fullPath);
         }
-        
-        System.out.println("Selected model path (SAFE - C:\\piper): " + fullPath);
+
+        System.out.println("Selected model path (SAFE): " + fullPath);
         return fullPath;
     }
-    
+
     /**
      * Find Piper executable path
      */
@@ -187,41 +219,42 @@ public class PiperTtsService {
         // First, try configured path
         if (configuredPiperPath != null && !configuredPiperPath.trim().isEmpty()) {
             String path = configuredPiperPath.trim();
-            
+
             File file = new File(path);
-            
+
             if (file.exists()) {
                 return file.getAbsolutePath();
             }
         }
-        
+
         // Try common locations (including our new safe location)
         // Docker'da Linux path'leri, Windows'ta Windows path'leri
         boolean isWindows = System.getProperty("os.name").toLowerCase().contains("windows");
-        String[] pathsToTry = isWindows ? new String[]{
-            "C:\\piper\\piper.exe", // Windows location
-            "piper.exe",
-            "piper"
-        } : new String[]{
-            "/usr/local/bin/piper", // Docker installed location
-            "/piper/piper", // Docker mount location (fallback)
-            "piper"
-        };
-        
+        String[] pathsToTry = isWindows ? new String[] {
+                "C:\\piper\\piper.exe", // Windows location
+                "piper.exe",
+                "piper"
+        }
+                : new String[] {
+                        "/usr/local/bin/piper", // Docker installed location
+                        "/piper/piper", // Docker mount location (fallback)
+                        "piper"
+                };
+
         for (String path : pathsToTry) {
-             File file = new File(path);
+            File file = new File(path);
             if (file.exists() && file.canExecute()) {
                 return file.getAbsolutePath();
             }
-             // Check if it's just a command available in PATH
-             if (!path.contains(File.separator) && !path.contains("/") && !path.contains("\\")) {
-                 return path;
-                }
+            // Check if it's just a command available in PATH
+            if (!path.contains(File.separator) && !path.contains("/") && !path.contains("\\")) {
+                return path;
             }
-        
+        }
+
         return "piper";
     }
-    
+
     /**
      * Check if Piper TTS is available
      */
@@ -229,34 +262,47 @@ public class PiperTtsService {
         try {
             String piperPath = findPiperPath();
             System.out.println("Trying Piper path: " + piperPath);
-            
+
             ProcessBuilder processBuilder = new ProcessBuilder(piperPath, "--version");
             processBuilder.redirectErrorStream(true);
             Process process = processBuilder.start();
-            
+
             long startTime = System.currentTimeMillis();
             while (process.isAlive() && (System.currentTimeMillis() - startTime) < 5000) {
                 Thread.sleep(100);
             }
-            
+
             if (process.isAlive()) {
                 process.destroy();
                 return false;
             }
-            
+
             int exitCode = process.exitValue();
-            
+
             // Also check if model file exists in the NEW location
             String amyModelPath = MODEL_BASE_DIR + File.separator + MODEL_AMY;
             File amyModel = new File(amyModelPath);
             boolean modelExists = amyModel.exists();
-            
-            System.out.println("Piper TTS check - path: " + piperPath + ", exitCode: " + exitCode + ", modelExists: " + modelExists);
-            
+
+            System.out.println("Piper TTS check - path: " + piperPath + ", exitCode: " + exitCode + ", modelExists: "
+                    + modelExists);
+
             return exitCode == 0 && modelExists;
         } catch (Exception e) {
             System.err.println("Piper TTS availability check failed: " + e.getMessage());
             return false;
         }
+    }
+
+    /**
+     * Start the process. Protected to allow mocking in tests.
+     */
+    protected Process startProcess(List<String> command, File workingDir) throws IOException {
+        ProcessBuilder processBuilder = new ProcessBuilder(command);
+        if (workingDir != null && workingDir.exists()) {
+            processBuilder.directory(workingDir);
+        }
+        processBuilder.redirectErrorStream(true);
+        return processBuilder.start();
     }
 }

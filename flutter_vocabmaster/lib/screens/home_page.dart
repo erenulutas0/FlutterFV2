@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:ui';
 import 'dart:math' as math;
+import 'dart:async';
 
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import '../models/word.dart'; // Add Word model
 import '../widgets/animated_background.dart';
 import '../services/user_data_service.dart';
 import '../services/auth_service.dart';
+import '../services/social_service.dart';
 import '../widgets/info_dialog.dart';
 import 'chat_list_page.dart';
 import 'chat_detail_page.dart';
@@ -25,6 +27,7 @@ import 'repeat_page.dart';
 import '../providers/app_state_provider.dart';
 import '../widgets/modern_card.dart';
 import '../widgets/modern_background.dart';
+import 'notifications_page.dart';
 
 class HomePage extends StatefulWidget {
   final Function(String) onNavigate;
@@ -55,11 +58,16 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
   late AnimationController _percentageAnimation;
   late AnimationController _pulseAnimation;
 
+  // Heartbeat timer for online status
+  Timer? _heartbeatTimer;
+  final SocialService _socialService = SocialService();
+
   @override
   void initState() {
     super.initState();
     _handleLostData();
     _loadOnlineUsers();
+    _startHeartbeat();
 
     // Glow animations
     _glowAnimation1 = AnimationController(
@@ -109,8 +117,19 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
     )..repeat(reverse: true);
   }
 
+  void _startHeartbeat() {
+    // İlk heartbeat'i hemen gönder
+    _socialService.sendHeartbeat();
+    
+    // Her 2 dakikada bir heartbeat gönder
+    _heartbeatTimer = Timer.periodic(const Duration(minutes: 2), (_) {
+      _socialService.sendHeartbeat();
+    });
+  }
+
   @override
   void dispose() {
+    _heartbeatTimer?.cancel();
     _glowAnimation1.dispose();
     _glowAnimation2.dispose();
     _statsAnimation.dispose();
@@ -220,12 +239,13 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
                               const SizedBox(height: 24),
                               // Quick Actions
                               _buildQuickActions(),
-                              const SizedBox(height: 24),
+                              // MVP: Social features disabled for v1.0
+                              // const SizedBox(height: 24),
                               // Social Feed Preview
-                              const SocialFeedPreview(),
-                              const SizedBox(height: 24),
+                              // const SocialFeedPreview(),
+                              // const SizedBox(height: 24),
                               // Online Users
-                              _buildOnlineUsers(),
+                              // _buildOnlineUsers(),
                               const SizedBox(height: 24),
                               // Recently Learned
                               _buildRecentlyLearned(),
@@ -388,6 +408,20 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
                             icon: const Icon(Icons.info_outline,
                                 color: Colors.white, size: 20),
                           ),
+                          // MVP: Notification icon disabled for v1.0
+                          // IconButton(
+                          //   visualDensity: VisualDensity.compact,
+                          //   onPressed: () {
+                          //     Navigator.push(
+                          //       context,
+                          //       MaterialPageRoute(
+                          //         builder: (_) => const NotificationsPage(),
+                          //       ),
+                          //     );
+                          //   },
+                          //   icon: const Icon(Icons.notifications_outlined,
+                          //       color: Colors.white, size: 20),
+                          // ),
                         ],
                       ),
                       const SizedBox(height: 8),
@@ -1590,18 +1624,19 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
                   width: 100,
                   onTap: () => widget.onNavigate('dictionary'),
                 ),
-                const SizedBox(width: 12),
-                _buildQuickActionButton(
-                   icon: Icons.chat_bubble_outline,
-                   label: 'Sohbet',
-                   width: 100,
-                   onTap: () {
-                     Navigator.push(
-                       context,
-                       MaterialPageRoute(builder: (context) => const ChatListPage()),
-                     );
-                   },
-                ),
+                // MVP: Sohbet disabled for v1.0
+                // const SizedBox(width: 12),
+                // _buildQuickActionButton(
+                //    icon: Icons.chat_bubble_outline,
+                //    label: 'Sohbet',
+                //    width: 100,
+                //    onTap: () {
+                //      Navigator.push(
+                //        context,
+                //        MaterialPageRoute(builder: (context) => const ChatListPage()),
+                //      );
+                //    },
+                // ),
               ],
             ),
           ),
@@ -1877,6 +1912,7 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
                           Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => ChatDetailPage(
+                                userId: user['id'] ?? 0, // Fallback for mock data
                                 name: user['name'],
                                 avatar: user['avatar'],
                                 status: user['status'],
@@ -1947,40 +1983,19 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
               final provider = Provider.of<AppStateProvider>(context);
               List<Word> recentWords = provider.allWords;
               
-              // Fallback Mock Data if empty (to show UI)
               if (recentWords.isEmpty) {
-                 recentWords = [
-                    Word(
-                      id: 101, 
-                      englishWord: 'Eloquent', 
-                      turkishMeaning: 'Belagatlı, açık sözlü', 
-                      difficulty: 'Adjective', 
-                      learnedDate: DateTime.now(), 
-                      sentences: [
-                        Sentence(id: 1, sentence: 'His speech was very eloquent.', translation: 'Konuşması çok belagatlıydı.', wordId: 101),
-                        Sentence(id: 2, sentence: 'She is an eloquent speaker.', translation: 'O, ağzı laf yapan bir konuşmacıdır.', wordId: 101),
-                      ]
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: Center(
+                    child: Text(
+                      'Henüz kelime öğrenilmedi.',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 14,
+                      ),
                     ),
-                    Word(
-                      id: 102, 
-                      englishWord: 'Perseverance', 
-                      turkishMeaning: 'Azim, sebat', 
-                      difficulty: 'Noun', 
-                      learnedDate: DateTime.now(), 
-                      sentences: [
-                         Sentence(id: 3, sentence: 'Perseverance is key to success.', translation: 'Azim başarının anahtarıdır.', wordId: 102),
-                         Sentence(id: 4, sentence: 'He showed great perseverance.', translation: 'Büyük bir azim gösterdi.', wordId: 102),
-                      ]
-                    ),
-                    Word(
-                      id: 103, 
-                      englishWord: 'Gregarious', 
-                      turkishMeaning: 'Sosyal, cana yakın', 
-                      difficulty: 'Adjective', 
-                      learnedDate: DateTime.now(), 
-                      sentences: []
-                    ),
-                 ];
+                  ),
+                );
               }
 
               return Column(
@@ -2402,18 +2417,20 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
 
   Future<void> _addWordToLibrary(Map<String, dynamic> wordData, {required bool withSentence}) async {
     try {
-      final userDateService = UserDataService();
+      final appState = context.read<AppStateProvider>();
       final addedDate = DateTime.now();
       
-      final word = await userDateService.createWord(
+      // AppStateProvider üzerinden kelime ekle - otomatik XP ve stats güncellenir
+      final word = await appState.addWord(
         english: wordData['word'],
-        turkish: "⭐ ${wordData['translation']}", 
+        turkish: "⭐ ${wordData['translation']}",
         addedDate: addedDate,
         difficulty: (wordData['difficulty'] as String? ?? 'Medium').toLowerCase(),
       );
 
       if (word != null && withSentence) {
-        await userDateService.addSentenceToWord(
+        // AppStateProvider üzerinden cümle ekle - otomatik XP güncellenir
+        await appState.addSentenceToWord(
           wordId: word.id,
           sentence: wordData['exampleSentence'],
           translation: wordData['exampleTranslation'],
@@ -2421,29 +2438,40 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
         );
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: const [
-              Icon(Icons.check_circle, color: Colors.white),
-              SizedBox(width: 8),
-              Text('Başarıyla eklendi!'),
-            ],
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    withSentence 
+                        ? 'Kelime ve cümle eklendi! +15 XP' 
+                        : 'Kelime eklendi! +10 XP',
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-      );
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Hata oluştu: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Hata oluştu: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
+
 
   Color _getDifficultyColor(String? difficulty) {
     switch ((difficulty ?? '').toLowerCase()) {

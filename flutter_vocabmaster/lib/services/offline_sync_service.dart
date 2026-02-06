@@ -136,7 +136,9 @@ class OfflineSyncService {
         if (words.isNotEmpty) {
           await _localDb.saveAllWords(words);
         }
-        return words;
+        
+        // Return accumulated words (API + local pending)
+        return await _localDb.getAllWords();
       } catch (e) {
         print('🔴 API hatası, local veriler kullanılıyor: $e');
         final localWords = await _localDb.getAllWords();
@@ -453,6 +455,11 @@ class OfflineSyncService {
   /// Pending XP getir
   Future<int> getPendingXp() async {
     return await _localDb.getPendingXp();
+  }
+
+  /// XP ekle (ve local DB'ye kaydet)
+  Future<void> addXp(int amount) async {
+    await _localDb.addXp(amount);
   }
 
   // ==================== SYNC ====================

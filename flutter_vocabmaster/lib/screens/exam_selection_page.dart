@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../widgets/animated_background.dart';
 import 'exam_chat_page.dart';
+import 'turkey_exams_page.dart';
 
 class ExamSelectionPage extends StatelessWidget {
   const ExamSelectionPage({Key? key}) : super(key: key);
@@ -27,7 +28,7 @@ class ExamSelectionPage extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Sınav Hazırlığı',
+                            'Sınav Merkezi',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 18,
@@ -35,7 +36,7 @@ class ExamSelectionPage extends StatelessWidget {
                             ),
                           ),
                           Text(
-                            'Hangi sınava hazırlanıyorsun?',
+                            'Hedefindeki puanı yakala',
                             style: TextStyle(
                               color: Colors.white70,
                               fontSize: 12,
@@ -52,12 +53,12 @@ class ExamSelectionPage extends StatelessWidget {
                     padding: const EdgeInsets.all(24),
                     child: Column(
                       children: [
-                        const SizedBox(height: 20),
+                        const SizedBox(height: 10),
                         // Big Generic Icon
                         const Icon(
-                          Icons.menu_book_rounded,
+                          Icons.school_rounded,
                           size: 64,
-                          color: Color(0xFF0ea5e9),
+                          color: Color(0xFFF43F5E), // Rose color for variety
                         ),
                         const SizedBox(height: 24),
                         const Text(
@@ -70,14 +71,38 @@ class ExamSelectionPage extends StatelessWidget {
                         ),
                         const SizedBox(height: 8),
                         const Text(
-                          'Yapay zeka ile pratik yaparak hazırlan',
+                          'ÖSYM ve Uluslararası Sınavlar',
                           style: TextStyle(
-                            color: Color(0xFF0ea5e9),
+                            color: Colors.white70,
                             fontSize: 16,
                           ),
                         ),
                         
-                        const SizedBox(height: 48),
+                        const SizedBox(height: 40),
+
+                        // TURKEY EXAMS CARD (NEW)
+                         _buildExamCard(
+                          context,
+                          title: 'YDS & YÖKDİL',
+                          subtitle: 'Türkiye Akademik Dil Sınavları',
+                          features: [
+                            'ÖSYM Formatında Sorular',
+                            'Orijinal Soru Üretimi',
+                            'Puan Hesaplama',
+                          ],
+                          color: const Color(0xFFEF4444), // Red for Turkey
+                          icon: Icons.flag,
+                          onTap: () {
+                             Navigator.push(
+                               context,
+                               MaterialPageRoute(
+                                 builder: (context) => const TurkeyExamsPage(), // Will create this next
+                               ),
+                             );
+                          },
+                        ),
+
+                        const SizedBox(height: 24),
                         
                         // IELTS Card
                         _buildExamCard(
@@ -90,6 +115,7 @@ class ExamSelectionPage extends StatelessWidget {
                             'Real Exam Questions',
                           ],
                           color: const Color(0xFF0ea5e9), // Cyan
+                          icon: Icons.language,
                           onTap: () {
                             Navigator.push(
                               context,
@@ -113,6 +139,7 @@ class ExamSelectionPage extends StatelessWidget {
                             'Academic Topics',
                           ],
                           color: const Color(0xFF3b82f6), // Blue
+                          icon: Icons.laptop_chromebook,
                           onTap: () {
                             Navigator.push(
                               context,
@@ -140,6 +167,7 @@ class ExamSelectionPage extends StatelessWidget {
     required String subtitle,
     required List<String> features,
     required Color color,
+    required IconData icon,
     required VoidCallback onTap,
   }) {
     return GestureDetector(
@@ -175,7 +203,7 @@ class ExamSelectionPage extends StatelessWidget {
                       ),
                     ],
                   ),
-                  child: const Icon(Icons.verified_outlined, color: Colors.white, size: 32),
+                  child: Icon(icon, color: Colors.white, size: 32),
                 ),
                 const SizedBox(width: 20),
                 Expanded(
@@ -225,7 +253,7 @@ class ExamSelectionPage extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'AI-powered practice',
+                  'Sınava Başla',
                   style: TextStyle(
                     color: color, // Matching the brand color
                     fontSize: 14,

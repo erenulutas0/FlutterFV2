@@ -3,9 +3,41 @@ import '../constants/social_feed_colors.dart';
 import '../screens/social_feed_page.dart';
 import 'modern_card.dart';
 import 'modern_background.dart';
+import '../services/feed_service.dart';
 
-class SocialFeedPreview extends StatelessWidget {
+class SocialFeedPreview extends StatefulWidget {
   const SocialFeedPreview({Key? key}) : super(key: key);
+
+  @override
+  State<SocialFeedPreview> createState() => _SocialFeedPreviewState();
+}
+
+class _SocialFeedPreviewState extends State<SocialFeedPreview> {
+  List<UserActivity> _activities = [];
+  bool _isLoading = true;
+  final FeedService _feedService = FeedService();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPreviewFeed();
+  }
+
+  Future<void> _loadPreviewFeed() async {
+    try {
+      final data = await _feedService.getFeed(limit: 2);
+      if (mounted) {
+        setState(() {
+          _activities = data;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -20,32 +52,43 @@ class SocialFeedPreview extends StatelessWidget {
         children: [
           _buildHeader(context),
           const SizedBox(height: 24),
-          _buildPost(
-            context,
-            name: 'Sarah Johnson',
-            time: '2 saat önce',
-            content: 'Just completed my 30-day streak! 🔥 Learned 150+ words this month. Consisten...',
-            likes: 124,
-            comments: 15,
-            avatarColor: SocialFeedColors.avatarCyan,
-            avatarLetter: 'S',
-          ),
-          const SizedBox(height: 20),
-          _buildPost(
-            context,
-            name: 'Emma Williams',
-            time: '5 saat önce',
-            content: 'Pro tip: Watch your favorite Netflix shows in English with English subtitles. I\'ve learne...',
-            likes: 87,
-            comments: 8,
-            avatarColor: SocialFeedColors.avatarPurple,
-            avatarLetter: 'E',
-          ),
+          if (_isLoading)
+            const Center(child: CircularProgressIndicator(color: SocialFeedColors.avatarCyan))
+          else if (_activities.isEmpty)
+            const Center(
+              child: Text(
+                'Henüz paylaşım yok. İlk adımı sen at!',
+                style: TextStyle(color: Colors.white60, fontSize: 13),
+              ),
+            )
+          else
+            ..._activities.map((a) => Column(
+              children: [
+                _buildPost(
+                  context,
+                  name: 'User ${a.userId}',
+                  time: _formatTimestamp(a.createdAt),
+                  content: a.description,
+                  likes: 0,
+                  comments: 0,
+                  avatarColor: SocialFeedColors.avatarCyan,
+                  avatarLetter: 'U',
+                ),
+                if (a != _activities.last) const SizedBox(height: 20),
+              ],
+            )),
           const SizedBox(height: 24),
           _buildCTAButton(context),
         ],
       ),
     );
+  }
+
+  String _formatTimestamp(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 60) return '${diff.inMinutes} dk önce';
+    if (diff.inHours < 24) return '${diff.inHours} saat önce';
+    return '${diff.inDays} gn önce';
   }
 
   Widget _buildHeader(BuildContext context) {

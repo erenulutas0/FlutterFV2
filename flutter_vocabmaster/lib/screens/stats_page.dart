@@ -4,6 +4,8 @@ import '../widgets/animated_background.dart';
 import '../widgets/bottom_nav.dart';
 import '../widgets/global_matchmaking_sheet.dart';
 import '../services/user_data_service.dart';
+import 'package:provider/provider.dart';
+import '../providers/app_state_provider.dart';
 
 import '../widgets/navigation_menu_panel.dart';
 import '../main.dart'; // Import MainScreen
@@ -27,72 +29,64 @@ class _StatsPageState extends State<StatsPage> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   
   bool _isLoading = true;
-  int _totalWords = 0;
-  int _streak = 0;
-  List<Map<String, dynamic>> _weeklyActivity = [];
   List<Map<String, dynamic>> _achievements = [];
 
   @override
   void initState() {
     super.initState();
-    _loadStats();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadStats();
+    });
   }
 
   Future<void> _loadStats() async {
+    // Arka planda API'den en güncel istatistikleri çek
+
     try {
-      // Mock Data Definition
-      final mockWeekly = List.generate(7, (index) => {'day': index, 'count': (index * 5) % 20 + 5});
-      final mockAchievements = [
-        {'icon': '🚀', 'title': 'İlk Adım', 'desc': 'İlk kelimeni öğrendin', 'unlocked': true},
-        {'icon': '🔥', 'title': 'Ateşli', 'desc': '3 gün üst üste çalıştın', 'unlocked': true},
-        {'icon': '📚', 'title': 'Kitap Kurdu', 'desc': '100 kelime öğrendin', 'unlocked': false},
-        {'icon': '🎓', 'title': 'Mezun', 'desc': 'Bütün seviyeleri tamamladın', 'unlocked': false},
-      ];
-      final mockTotalWords = 124;
-      final mockStreak = 5;
+      final stats = await _userDataService.getAllStats();
+      final weekly = await _userDataService.getWeeklyActivity();
+      final achievements = await _userDataService.getAchievements();
 
-      // Try fetching real data
-      Map<String, dynamic> stats = {}; 
-      List<Map<String, dynamic>> weekly = [];
-      List<Map<String, dynamic>> achievements = [];
-
-      try {
-        stats = await _userDataService.getAllStats();
-        weekly = await _userDataService.getWeeklyActivity();
-        achievements = await _userDataService.getAchievements();
-      } catch (innerError) {
-        print("Data fetch failed, falling back to mock: $innerError");
-      }
-      
       if (mounted) {
         setState(() {
-          // Use real data if available and not empty/zero, otherwise fallback to mock
-          _totalWords = (stats['totalWords'] != null && stats['totalWords'] != 0) ? stats['totalWords'] : mockTotalWords;
-          _streak = (stats['streak'] != null && stats['streak'] != 0) ? stats['streak'] : mockStreak;
-          _weeklyActivity = (weekly.isNotEmpty) ? weekly : mockWeekly;
-          _achievements = (achievements.isNotEmpty) ? achievements : mockAchievements;
+          if (achievements.isNotEmpty) _achievements = achievements;
           _isLoading = false;
         });
+        
+        // Global State'i güncelle
+        try {
+          final appState = context.read<AppStateProvider>();
+          
+          appState.updateUserStats({
+            'totalWords': stats['totalWords'],
+            'streak': stats['streak'],
+            'xp': stats['totalXp'] ?? 0,
+            'level': stats['level'] ?? 1,
+          });
+          
+          if (weekly.isNotEmpty) {
+            appState.updateWeeklyActivity(weekly);
+          }
+        } catch (_) {}
       }
     } catch (e) {
-      // Complete fallback
-      if (mounted) {
-         setState(() {
-           _totalWords = 124;
-           _streak = 5;
-           _weeklyActivity = List.generate(7, (index) => {'day': index, 'count': (index * 5) % 20 + 5});
-           _achievements = [
-              {'icon': '🚀', 'title': 'İlk Adım', 'desc': 'İlk kelimeni öğrendin', 'unlocked': true},
-              {'icon': '🔥', 'title': 'Ateşli', 'desc': '3 gün üst üste çalıştın', 'unlocked': true},
-           ];
-           _isLoading = false; 
-         });
-      }
+      debugPrint("API veri çekme hatası: $e");
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Provider'ı dinle (Watch)
+    final appState = context.watch<AppStateProvider>();
+    final userStats = appState.userStats;
+    final weeklyActivity = appState.weeklyActivity;
+    
+    // Eğer weeklyActivity boşsa (henüz yüklenmediyse) mock data oluştur
+    final displayWeeklyActivity = weeklyActivity.isNotEmpty 
+        ? weeklyActivity 
+        : List.generate(7, (index) => {'day': index, 'count': 0});
+
     return Scaffold(
       key: _scaffoldKey,
       drawer: NavigationMenuPanel(
@@ -170,7 +164,7 @@ class _StatsPageState extends State<StatsPage> {
                         Expanded(
                           child: _buildTopStatCard(
                             icon: Icons.menu_book,
-                            value: _totalWords.toString(),
+                            value: (userStats['totalWords'] ?? 0).toString(),
                             label: 'Toplam Kelime',
                             color: const Color(0xFF06b6d4),
                           ),
@@ -179,7 +173,7 @@ class _StatsPageState extends State<StatsPage> {
                         Expanded(
                           child: _buildTopStatCard(
                             icon: Icons.local_fire_department,
-                            value: _streak.toString(),
+                            value: (userStats['streak'] ?? 0).toString(),
                             label: 'Gün Serisi',
                             color: const Color(0xFF06b6d4),
                           ),
@@ -190,12 +184,12 @@ class _StatsPageState extends State<StatsPage> {
                     const SizedBox(height: 24),
                     
                     // Weekly Progress Chart
-                    _buildWeeklyProgressCard(),
+                    _buildWeeklyProgressCard(displayWeeklyActivity),
                     
                     const SizedBox(height: 24),
                     
                     // XP Progress Chart
-                    _buildXPProgressCard(),
+                    _buildXPProgressCard(displayWeeklyActivity),
                     
                     const SizedBox(height: 24),
                     
@@ -212,7 +206,8 @@ class _StatsPageState extends State<StatsPage> {
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const GlobalMatchmakingSheet(),
+          // MVP: GlobalMatchmakingSheet disabled for v1.0
+          // const GlobalMatchmakingSheet(),
           BottomNav(
             currentIndex: -1, // No tab selected usually, or maybe 2 if we consider menu? -1 is safer.
             onTap: (index) {
@@ -266,9 +261,9 @@ class _StatsPageState extends State<StatsPage> {
     );
   }
 
-  Widget _buildWeeklyProgressCard() {
+  Widget _buildWeeklyProgressCard(List<Map<String, dynamic>> weeklyActivity) {
     // Haftalık aktivite verilerinden bar chart data oluştur
-    final weeklyData = _weeklyActivity.asMap().entries.map((entry) {
+    final weeklyData = weeklyActivity.asMap().entries.map((entry) {
       final dayNames = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
       final dayIndex = entry.key;
       final count = entry.value['count'] as int? ?? 0;
@@ -411,9 +406,9 @@ class _StatsPageState extends State<StatsPage> {
     );
   }
 
-  Widget _buildXPProgressCard() {
+  Widget _buildXPProgressCard(List<Map<String, dynamic>> weeklyActivity) {
     // Haftalık XP verilerini hesapla
-    final xpData = _weeklyActivity.asMap().entries.map((entry) {
+    final xpData = weeklyActivity.asMap().entries.map((entry) {
       final count = entry.value['count'] as int? ?? 0;
       return FlSpot(entry.key.toDouble(), (count * 10).toDouble());
     }).toList();

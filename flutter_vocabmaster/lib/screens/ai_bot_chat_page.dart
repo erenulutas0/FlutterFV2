@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'dart:typed_data';
+import 'dart:convert';
+import 'dart:ui';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../widgets/animated_background.dart';
 import '../widgets/voice_selection_modal.dart';
 import '../services/chatbot_service.dart';
@@ -16,13 +18,32 @@ import '../services/piper_tts_service.dart';
 import '../models/voice_model.dart';
 
 class AIBotChatPage extends StatefulWidget {
-  const AIBotChatPage({Key? key}) : super(key: key);
+  final String? initialScenario;
+  final String? initialScenarioName;
+  final String? scenarioContext; // Kullanıcının girdiği konu/bağlam
+  
+  const AIBotChatPage({
+    Key? key,
+    this.initialScenario,
+    this.initialScenarioName,
+    this.scenarioContext,
+  }) : super(key: key);
 
   @override
   State<AIBotChatPage> createState() => _AIBotChatPageState();
 }
 
 class _AIBotChatPageState extends State<AIBotChatPage> with TickerProviderStateMixin {
+  static const List<String> _disagreementTopics = [
+    "Strict Office Attendance Policy vs Remote Work",
+    "Budget Cuts for Team Building Events",
+    "Switching to a New Project Management Tool",
+    "Delaying the Product Launch for Polish",
+    "Hiring a Junior vs Senior Developer",
+    "Changing the Brand Color Scheme",
+    "Mandatory Overtime to Meet Deadlines",
+  ];
+
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final List<ChatMessage> _messages = [];
@@ -40,10 +61,17 @@ class _AIBotChatPageState extends State<AIBotChatPage> with TickerProviderStateM
   late stt.SpeechToText _speech;
   bool _isListening = false;
   bool _continuousListening = false; // Persistent session state
+  bool _autoSendMode = true; // true = auto send on silence, false = manual send
+  bool _blurBotMessages = false; // Blur bot messages for listening practice
   
   // Seçili konuşmacı
   VoiceModel? _selectedVoice;
   bool _isFirstVisit = true;
+  
+  // Aktif senaryo (profesyonel konuşma pratiği için)
+  String? _activeScenario;
+  String? _activeScenarioName;
+  String? _activeScenarioContext;
   
   // Floating particles animation
   late AnimationController _particleController;
@@ -57,9 +85,68 @@ class _AIBotChatPageState extends State<AIBotChatPage> with TickerProviderStateM
       duration: const Duration(seconds: 20),
     )..repeat();
     
+    // Keep screen on while in chat
+    WakelockPlus.enable();
+    
     _checkTtsAvailability();
     _initFlutterTts(); // Fallback TTS hazırla
     _loadSelectedVoice();
+    
+    // Eğer senaryo ile açıldıysa, senaryoyu başlat
+    if (widget.initialScenario != null && widget.initialScenarioName != null) {
+      _activeScenario = widget.initialScenario;
+      _activeScenarioName = widget.initialScenarioName;
+      _activeScenarioContext = widget.scenarioContext;
+      
+      // Eğer disagreement ise ve context yoksa, rastgele seç
+      if (_activeScenario == 'disagreement_colleague' && (_activeScenarioContext == null || _activeScenarioContext!.isEmpty)) {
+        _activeScenarioContext = _disagreementTopics[DateTime.now().millisecond % _disagreementTopics.length];
+      }
+      
+      // Senaryo başlangıç mesajını biraz geciktir (TTS hazır olsun)
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted) {
+          _sendScenarioWelcomeMessage(widget.initialScenario!);
+        }
+      });
+    }
+  }
+
+  /// Senaryo bazlı karşılama mesajı gönder
+  void _sendScenarioWelcomeMessage(String scenarioId) {
+    String welcomeMessage;
+    final contextText = _activeScenarioContext;
+
+    switch (scenarioId) {
+      case 'job_interview_followup':
+        if (contextText != null && contextText.isNotEmpty) {
+           welcomeMessage = "Hi there! I see you're following up on your interview for the '$contextText' position. It's good to hear from you. How are you feeling about how it went?";
+        } else {
+           welcomeMessage = "Hi there! This is Sarah from HR. Thanks for reaching out. Could you remind me which position you applied for so I can pull up your file?";
+        }
+        break;
+      case 'academic_presentation_qa':
+        if (contextText != null && contextText.isNotEmpty) {
+          welcomeMessage = "Thank you for that presentation on '$contextText'. I'm Dr. Johnson. I found your topic interesting, but I have a few questions about your methodology. Shall we dive in?";
+        } else {
+          welcomeMessage = "Thank you for that presentation. I'm Dr. Johnson. Before I ask my questions, could you briefly summarize the core thesis of your work again for the audience?";
+        }
+        break;
+      case 'disagreement_colleague':
+        // Disagreement is dynamic, so generic opening is better, prompt will handle the rest
+        welcomeMessage = "Hey, I got your email about the project. Look, I respect your opinion, but there's a serious issue we need to discuss. Can we talk?";
+        break;
+      case 'explaining_to_manager':
+        if (contextText != null && contextText.isNotEmpty) {
+           welcomeMessage = "I have 10 minutes before my next meeting. You wanted to discuss '$contextText'? Go ahead, explain the situation clearly. I'm listening.";
+        } else {
+           welcomeMessage = "I have 10 minutes before my next meeting. You wanted to discuss an urgent matter with me? Go ahead, what is the specific issue?";
+        }
+        break;
+      default:
+        welcomeMessage = "Hello! Let's practice English together. What would you like to talk about?";
+    }
+    _addBotMessage(welcomeMessage, speak: true);
   }
 
   Future<void> _initFlutterTts() async {
@@ -148,6 +235,8 @@ class _AIBotChatPageState extends State<AIBotChatPage> with TickerProviderStateM
 
   @override
   void dispose() {
+    // Disable wakelock when leaving
+    WakelockPlus.disable();
     _messageController.dispose();
     _scrollController.dispose();
     _particleController.dispose();
@@ -273,8 +362,12 @@ class _AIBotChatPageState extends State<AIBotChatPage> with TickerProviderStateM
     _scrollToBottom();
     
     try {
-      // Backend'den gerçek AI yanıtı al
-      final response = await _chatbotService.chat(userMessage);
+      // Backend'den gerçek AI yanıtı al (senaryo varsa ilet)
+      final response = await _chatbotService.chat(
+        userMessage, 
+        scenario: _activeScenario,
+        scenarioContext: _activeScenarioContext,
+      );
       
       if (mounted) {
         setState(() => _isTyping = false);
@@ -283,7 +376,14 @@ class _AIBotChatPageState extends State<AIBotChatPage> with TickerProviderStateM
     } catch (e) {
       if (mounted) {
         setState(() => _isTyping = false);
-        _addBotMessage('Üzgünüm, bir hata oluştu: ${e.toString()}');
+        // User-friendly error message
+        String errorMsg = 'Bağlantı hatası. İnternet bağlantınızı kontrol edip tekrar deneyin.';
+        if (e.toString().contains('SocketException') || e.toString().contains('Failed host lookup')) {
+          errorMsg = 'İnternet bağlantısı yok. WiFi veya mobil veriyi kontrol et!';
+        } else if (e.toString().contains('TimeoutException')) {
+          errorMsg = 'Sunucu yanıt vermiyor. Biraz sonra tekrar dene!';
+        }
+        _addBotMessage(errorMsg);
       }
     }
   }
@@ -303,6 +403,595 @@ class _AIBotChatPageState extends State<AIBotChatPage> with TickerProviderStateM
         );
       }
     });
+  }
+
+  /// Mesajı göndermeden önce sesli dinle
+  Future<void> _playbackUserMessage() async {
+    if (_messageController.text.trim().isEmpty) return;
+    if (!_autoSendMode) {
+      // Manuel modda playback özelliği aktif
+      setState(() => _isSpeaking = true);
+      try {
+        await _flutterTts.speak(_messageController.text.trim());
+      } catch (e) {
+        debugPrint('Playback error: $e');
+      } finally {
+        if (mounted) setState(() => _isSpeaking = false);
+      }
+    }
+  }
+
+  /// Yeni sohbet başlat
+  void _startNewChat() {
+    if (_messages.isEmpty) return;
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1e293b),
+        title: const Text('Yeni Sohbet', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Mevcut sohbeti temizleyip yeni bir konuşma başlamak istiyor musun?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('İptal', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              setState(() {
+                _messages.clear();
+                _activeScenario = null;
+                _activeScenarioName = null;
+                _activeScenarioContext = null;
+              });
+              _addBotMessage('Yeni bir sohbete başladık! Seninle konuşmak güzel. 😊');
+            },
+            child: const Text('Evet', style: TextStyle(color: Color(0xFF0ea5e9))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Senaryo seçim modalı
+  void _showScenarioModal() {
+    final scenarios = [
+      {
+        'id': 'job_interview_followup',
+        'name': 'Job Interview Follow-up',
+        'subtitle': 'Mülakat Sonrası Takip',
+        'icon': Icons.business_center,
+        'color': const Color(0xFF8b5cf6),
+        'welcomeMessage': "Hi there! This is Sarah from HR. Thanks for reaching out after your interview yesterday. How can I help you today?",
+      },
+      {
+        'id': 'academic_presentation_qa',
+        'name': 'Academic Presentation Q&A',
+        'subtitle': 'Akademik Sunum Soru-Cevap',
+        'icon': Icons.school,
+        'color': const Color(0xFF0ea5e9),
+        'welcomeMessage': "Thank you for that presentation. I'm Dr. Johnson. I have a few questions about your methodology. First, could you explain how you collected your data?",
+      },
+      {
+        'id': 'disagreement_colleague',
+        'name': 'Disagreement with Colleague',
+        'subtitle': 'Meslektaşla Anlaşmazlık',
+        'icon': Icons.people_outline,
+        'color': const Color(0xFFf59e0b),
+        'welcomeMessage': "Hey, I got your email about the project direction. Look, I respect your opinion, but I really think we should reconsider this approach. What's your rationale here?",
+      },
+      {
+        'id': 'explaining_to_manager',
+        'name': 'Explaining to Manager',
+        'subtitle': 'Yöneticiye Açıklama',
+        'icon': Icons.person_outline,
+        'color': const Color(0xFF10b981),
+        'welcomeMessage': "I have 10 minutes before my next meeting. You wanted to discuss something with me? Go ahead, what is it?",
+      },
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF1e293b),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            
+            // Title
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0ea5e9).withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.theater_comedy, color: Color(0xFF0ea5e9), size: 24),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Konuşma Senaryosu Seç',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        'Profesyonel durumları pratik edin',
+                        style: TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            
+            const SizedBox(height: 20),
+            
+            // Current scenario indicator
+            if (_activeScenario != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF22c55e).withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFF22c55e).withOpacity(0.4)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.check_circle, color: Color(0xFF22c55e), size: 16),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Aktif: $_activeScenarioName',
+                      style: const TextStyle(color: Color(0xFF22c55e), fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            
+            // Scenario cards
+            ...scenarios.map((scenario) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _startScenario(
+                      scenario['id'] as String,
+                      scenario['name'] as String,
+                    );
+                  },
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: (scenario['color'] as Color).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _activeScenario == scenario['id']
+                            ? (scenario['color'] as Color)
+                            : (scenario['color'] as Color).withOpacity(0.3),
+                        width: _activeScenario == scenario['id'] ? 2 : 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: (scenario['color'] as Color).withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(
+                            scenario['icon'] as IconData,
+                            color: scenario['color'] as Color,
+                            size: 22,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                scenario['name'] as String,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              Text(
+                                scenario['subtitle'] as String,
+                                style: const TextStyle(color: Colors.white54, fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(
+                          Icons.chevron_right,
+                          color: (scenario['color'] as Color).withOpacity(0.6),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            )),
+            
+            const Divider(color: Colors.white12, height: 24),
+            
+            // Free chat option
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _exitScenario();
+                },
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _activeScenario == null
+                          ? Colors.white.withOpacity(0.3)
+                          : Colors.white.withOpacity(0.1),
+                      width: _activeScenario == null ? 2 : 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.chat_bubble_outline, color: Colors.white70, size: 22),
+                      ),
+                      const SizedBox(width: 14),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Serbest Sohbet',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                              ),
+                            ),
+                            Text(
+                              'Normal konuşma pratiği',
+                              style: TextStyle(color: Colors.white54, fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_activeScenario == null)
+                        const Icon(Icons.check_circle, color: Color(0xFF22c55e), size: 20),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Senaryo başlat
+  void _startScenario(String scenarioId, String scenarioName) {
+    String? contextText;
+    if (scenarioId == 'disagreement_colleague') {
+      contextText = _disagreementTopics[DateTime.now().millisecond % _disagreementTopics.length];
+    }
+
+    setState(() {
+      _messages.clear();
+      _activeScenario = scenarioId;
+      _activeScenarioName = scenarioName;
+      _activeScenarioContext = contextText;
+    });
+    
+    // Senaryo başlangıç mesajı (Context'e göre dinamik olabilir)
+    _sendScenarioWelcomeMessage(scenarioId);
+    
+    // Bilgi mesajı
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.theater_comedy, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text('$scenarioName senaryosu başladı!')),
+          ],
+        ),
+        backgroundColor: const Color(0xFF8b5cf6),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  /// Senaryodan çık
+  void _exitScenario() {
+    if (_activeScenario == null) return;
+    
+    setState(() {
+      _messages.clear();
+      _activeScenario = null;
+      _activeScenarioName = null;
+      _activeScenarioContext = null;
+    });
+    
+    _addBotMessage(
+      'Serbest sohbete döndük! Ben ${_selectedVoice?.name ?? 'Amy'}. Ne hakkında konuşmak istersin? 😊',
+      speak: true,
+    );
+  }
+
+  /// Sohbeti kaydet
+  Future<void> _saveConversation() async {
+    if (_messages.isEmpty) return;
+    
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      // Existing conversations
+      final existingJson = prefs.getString('saved_conversations') ?? '[]';
+      final List<dynamic> conversations = jsonDecode(existingJson);
+      
+      // Create new conversation object
+      final newConversation = {
+        'id': DateTime.now().millisecondsSinceEpoch.toString(),
+        'date': DateTime.now().toIso8601String(),
+        'voiceName': _selectedVoice?.name ?? 'AI Bot',
+        'messageCount': _messages.length,
+        'messages': _messages.map((m) => {
+          'text': m.text,
+          'isBot': m.isBot,
+          'time': m.time,
+        }).toList(),
+      };
+      
+      conversations.insert(0, newConversation);
+      
+      // Keep only last 3 conversations
+      if (conversations.length > 3) {
+        conversations.removeRange(3, conversations.length);
+      }
+      
+      await prefs.setString('saved_conversations', jsonEncode(conversations));
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sohbet kaydedildi! ✓'),
+            backgroundColor: Color(0xFF22c55e),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Kaydetme hatası: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Sohbet geçmişini göster
+  Future<void> _showConversationHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final existingJson = prefs.getString('saved_conversations') ?? '[]';
+    final List<dynamic> conversations = jsonDecode(existingJson);
+    
+    if (!mounted) return;
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1e293b),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.3,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (_, controller) => Column(
+          children: [
+            // Handle
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Title
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Icon(Icons.history, color: Color(0xFF0ea5e9)),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Sohbet Geçmişi',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${conversations.length} sohbet',
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(color: Colors.white12),
+            // List
+            Expanded(
+              child: conversations.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'Henüz kayıtlı sohbet yok.\nBir sohbeti kaydetmek için 💾 butonuna bas.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white38),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: controller,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: conversations.length,
+                      itemBuilder: (_, index) {
+                        final conv = conversations[index];
+                        final date = DateTime.tryParse(conv['date'] ?? '') ?? DateTime.now();
+                        final messages = conv['messages'] as List<dynamic>? ?? [];
+                        final firstUserMsg = messages.firstWhere(
+                          (m) => m['isBot'] == false,
+                          orElse: () => {'text': 'Sohbet'},
+                        );
+                        
+                        return Dismissible(
+                          key: Key(conv['id'].toString()),
+                          direction: DismissDirection.endToStart,
+                          background: Container(
+                            alignment: Alignment.centerRight,
+                            padding: const EdgeInsets.only(right: 20),
+                            color: Colors.red,
+                            child: const Icon(Icons.delete, color: Colors.white),
+                          ),
+                          onDismissed: (_) => _deleteConversation(conv['id'].toString()),
+                          child: Card(
+                            color: const Color(0xFF0f172a),
+                            margin: const EdgeInsets.only(bottom: 8),
+                            child: ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: const Color(0xFF0ea5e9),
+                                child: Text(
+                                  conv['voiceName']?[0] ?? 'A',
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                              ),
+                              title: Text(
+                                (firstUserMsg['text'] as String).length > 40
+                                    ? '${(firstUserMsg['text'] as String).substring(0, 40)}...'
+                                    : firstUserMsg['text'],
+                                style: const TextStyle(color: Colors.white, fontSize: 14),
+                              ),
+                              subtitle: Text(
+                                '${conv['voiceName']} • ${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')} • ${conv['messageCount']} mesaj',
+                                style: const TextStyle(color: Colors.white38, fontSize: 11),
+                              ),
+                              trailing: const Icon(Icons.chevron_right, color: Colors.white38),
+                              onTap: () {
+                                Navigator.pop(ctx);
+                                _loadConversation(conv);
+                              },
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Sohbeti yükle
+  void _loadConversation(Map<String, dynamic> conv) {
+    final messages = conv['messages'] as List<dynamic>? ?? [];
+    
+    setState(() {
+      _messages.clear();
+      for (final m in messages) {
+        _messages.add(ChatMessage(
+          text: m['text'] ?? '',
+          isBot: m['isBot'] ?? false,
+          time: m['time'] ?? '',
+        ));
+      }
+    });
+    
+    _scrollToBottom();
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${conv['voiceName']} ile sohbet yüklendi'),
+        backgroundColor: const Color(0xFF0ea5e9),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// Sohbeti sil
+  Future<void> _deleteConversation(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    final existingJson = prefs.getString('saved_conversations') ?? '[]';
+    final List<dynamic> conversations = jsonDecode(existingJson);
+    
+    conversations.removeWhere((c) => c['id'].toString() == id);
+    await prefs.setString('saved_conversations', jsonEncode(conversations));
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sohbet silindi'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 1),
+        ),
+      );
+    }
   }
 
   @override
@@ -368,9 +1057,15 @@ class _AIBotChatPageState extends State<AIBotChatPage> with TickerProviderStateM
       bool available = await _speech.initialize(
         onStatus: (val) {
           if (val == 'done' || val == 'notListening') {
-             // If stopped automatically (silence or timeout), send message
+             // If stopped automatically (silence or timeout)
              if (mounted && _isListening) {
-               _stopAndSend(manual: false);
+               // Only auto-send if autoSendMode is on
+               if (_autoSendMode) {
+                 _stopAndSend(manual: false);
+               } else {
+                 // Manual mode: just stop listening, don't send
+                 setState(() => _isListening = false);
+               }
              }
           }
         },
@@ -537,11 +1232,13 @@ class _AIBotChatPageState extends State<AIBotChatPage> with TickerProviderStateM
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        _selectedVoice != null
-                            ? '${_selectedVoice!.accent} • Sohbete hazır'
-                            : (_ttsAvailable ? 'Online - Sesli cevap aktif' : 'Online - Ready to chat'),
-                        style: const TextStyle(
-                          color: Color(0xFF0ea5e9),
+                        _activeScenario != null
+                            ? '$_activeScenarioName'
+                            : (_selectedVoice != null
+                                ? '${_selectedVoice!.accent} • Sohbete hazır'
+                                : (_ttsAvailable ? 'Online - Sesli cevap aktif' : 'Online - Ready to chat')),
+                        style: TextStyle(
+                          color: _activeScenario != null ? const Color(0xFF8b5cf6) : const Color(0xFF0ea5e9),
                           fontSize: 12,
                         ),
                         overflow: TextOverflow.ellipsis,
@@ -554,14 +1251,104 @@ class _AIBotChatPageState extends State<AIBotChatPage> with TickerProviderStateM
             ),
           ),
           
-          // Settings Button - Konuşmacı değiştir
-          IconButton(
-            onPressed: _showVoiceSelectionModal,
-            icon: const Icon(
-              Icons.settings,
-              color: Colors.white54,
-            ),
-            tooltip: 'Konuşmacı Değiştir',
+          // Popup Menu for extra actions
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.white54),
+            color: const Color(0xFF1e293b),
+            onSelected: (value) {
+              switch (value) {
+                case 'new':
+                  _startNewChat();
+                  break;
+                case 'save':
+                  _saveConversation();
+                  break;
+                case 'history':
+                  _showConversationHistory();
+                  break;
+                case 'voice':
+                  _showVoiceSelectionModal();
+                  break;
+                case 'scenario':
+                  _showScenarioModal();
+                  break;
+                case 'blur':
+                  setState(() => _blurBotMessages = !_blurBotMessages);
+                  break;
+              }
+            },
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(
+                value: 'new',
+                child: Row(
+                  children: [
+                    Icon(Icons.add_circle_outline, color: Colors.white54, size: 20),
+                    SizedBox(width: 12),
+                    Text('Yeni Sohbet', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'save',
+                enabled: _messages.isNotEmpty,
+                child: Row(
+                  children: [
+                    Icon(Icons.save_outlined, color: _messages.isNotEmpty ? Colors.white54 : Colors.white24, size: 20),
+                    const SizedBox(width: 12),
+                    Text('Sohbeti Kaydet', style: TextStyle(color: _messages.isNotEmpty ? Colors.white : Colors.white38)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'history',
+                child: Row(
+                  children: [
+                    Icon(Icons.history, color: Colors.white54, size: 20),
+                    SizedBox(width: 12),
+                    Text('Sohbet Geçmişi', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'voice',
+                child: Row(
+                  children: [
+                    Icon(Icons.record_voice_over, color: Colors.white54, size: 20),
+                    SizedBox(width: 12),
+                    Text('Konuşmacı Değiştir', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'scenario',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.theater_comedy,
+                      color: _activeScenario != null ? const Color(0xFF8b5cf6) : Colors.white54,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      _activeScenario != null ? 'Senaryo: $_activeScenarioName' : 'Senaryo Seç',
+                      style: TextStyle(
+                        color: _activeScenario != null ? const Color(0xFF8b5cf6) : Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'blur',
+                child: Row(
+                  children: [
+                    Icon(_blurBotMessages ? Icons.visibility : Icons.visibility_off, color: _blurBotMessages ? const Color(0xFF0ea5e9) : Colors.white54, size: 20),
+                    const SizedBox(width: 12),
+                    Text(_blurBotMessages ? 'Metni Göster' : 'Metni Gizle (Dinleme)', style: const TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+            ],
           ),
           
           // Sound Toggle
@@ -687,14 +1474,68 @@ class _AIBotChatPageState extends State<AIBotChatPage> with TickerProviderStateM
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  message.text,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    height: 1.4,
+                // Blur effect for bot messages when enabled
+                if (message.isBot && _blurBotMessages)
+                  GestureDetector(
+                    onTap: () {
+                      // Temporarily show text
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(message.text),
+                          duration: const Duration(seconds: 3),
+                          backgroundColor: const Color(0xFF1e3a5f),
+                        ),
+                      );
+                    },
+                    child: Stack(
+                      children: [
+                        // Blurred text
+                        ImageFiltered(
+                          imageFilter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                          child: Text(
+                            message.text,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                        // Hint overlay
+                        Positioned.fill(
+                          child: Center(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.black38,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.touch_app, color: Colors.white70, size: 14),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'Görmek için dokun',
+                                    style: TextStyle(color: Colors.white70, fontSize: 11),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  Text(
+                    message.text,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      height: 1.4,
+                    ),
                   ),
-                ),
                 const SizedBox(height: 6),
                 Text(
                   message.time,
@@ -801,7 +1642,27 @@ class _AIBotChatPageState extends State<AIBotChatPage> with TickerProviderStateM
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
+              
+              // Playback Button (only in manual mode)
+              if (!_autoSendMode)
+                GestureDetector(
+                  onTap: _messageController.text.trim().isNotEmpty ? _playbackUserMessage : null,
+                  child: Container(
+                    width: 40,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.play_arrow,
+                      color: _messageController.text.trim().isNotEmpty ? const Color(0xFF22c55e) : Colors.white24,
+                      size: 22,
+                    ),
+                  ),
+                ),
+              if (!_autoSendMode) const SizedBox(width: 8),
               
               // Text Input
               Expanded(
@@ -821,6 +1682,7 @@ class _AIBotChatPageState extends State<AIBotChatPage> with TickerProviderStateM
                       border: InputBorder.none,
                       contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                     ),
+                    onChanged: (_) => setState(() {}), // Rebuild for playback button visibility
                     onSubmitted: (_) => _sendMessage(),
                   ),
                 ),
@@ -855,33 +1717,52 @@ class _AIBotChatPageState extends State<AIBotChatPage> with TickerProviderStateM
           ),
           const SizedBox(height: 12),
           
-          // Bottom Hint
+          // Voice Mode Toggle & Bottom Hint
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(
-                _ttsAvailable 
-                    ? 'Sesli cevap için hoparlör açık' 
-                    : 'Practice your English with AI Bot',
-                style: const TextStyle(
-                  color: Colors.white38,
-                  fontSize: 12,
+              // Auto/Manual Toggle
+              GestureDetector(
+                onTap: () => setState(() => _autoSendMode = !_autoSendMode),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: _autoSendMode ? const Color(0xFF22c55e) : const Color(0xFFf59e0b),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _autoSendMode ? Icons.auto_mode : Icons.touch_app,
+                        color: _autoSendMode ? const Color(0xFF22c55e) : const Color(0xFFf59e0b),
+                        size: 14,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _autoSendMode ? 'Otomatik' : 'Manuel',
+                        style: TextStyle(
+                          color: _autoSendMode ? const Color(0xFF22c55e) : const Color(0xFFf59e0b),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(width: 6),
-              Container(
-                width: 20,
-                height: 20,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF0ea5e9), Color(0xFF06b6d4)],
-                  ),
-                  borderRadius: BorderRadius.circular(5),
-                ),
-                child: const Icon(
-                  Icons.smart_toy_outlined,
-                  color: Colors.white,
-                  size: 12,
+              const SizedBox(width: 12),
+              Text(
+                _autoSendMode 
+                    ? 'Sessizlikte otomatik gönderir' 
+                    : 'Sen gönder butonuna bas',
+                style: const TextStyle(
+                  color: Colors.white38,
+                  fontSize: 11,
                 ),
               ),
             ],

@@ -52,28 +52,26 @@ public class ChatbotController {
     }
 
     // Securely retrieve UserID from the authenticated session (JWT)
-    private Long getUserId() {
-        // In a real Spring Security setup, we get Principal from context.
-        // For MVP without full Spring Security yet, we can't fully trust headers,
-        // but for now we should rely on the Token passed in Controller/Filter layer.
-        // Since we are not implementing full Spring Security filter chain in this step,
-        // we will mock this SECURE behavior by assuming the upstream AuthFilter has
-        // validated the token
-        // and set the ID in a Request Attribute or ThreadLocal.
+    // private Long getUserId() { ... }
+    // In a real Spring Security setup, we get Principal from context.
+    // For MVP without full Spring Security yet, we can't fully trust headers,
+    // but for now we should rely on the Token passed in Controller/Filter layer.
+    // Since we are not implementing full Spring Security filter chain in this step,
+    // we will mock this SECURE behavior by assuming the upstream AuthFilter has
+    // validated the token
+    // and set the ID in a Request Attribute or ThreadLocal.
 
-        // TODO: Integrate proper Spring Security Principal.
-        // For now, to stop trusting the client BLINDLY, we should validate the token.
-        // But since we are in a refactor, I will keep the header logic BUT Add a TODO
-        // warning
-        // as the User context logic is not fully present in this file.
+    // TODO: Integrate proper Spring Security Principal.
+    // For now, to stop trusting the client BLINDLY, we should validate the token.
+    // But since we are in a refactor, I will keep the header logic BUT Add a TODO
+    // warning
+    // as the User context logic is not fully present in this file.
 
-        // Actually, let's look at AuthController. Login returns userId.
-        // The frontend sends user ID.
-        // To be truly secure we need a JWT Filter.
-        // I will add a placeholder for JWT extraction.
-        return 1L; // Fallback to safe default or implement JWT extraction.
-    }
-
+    // Actually, let's look at AuthController. Login returns userId.
+    // The frontend sends user ID.
+    // To be truly secure we need a JWT Filter.
+    // I will add a placeholder for JWT extraction.
+    // Fallback to safe default or implement JWT extraction.
     // TEMPORARY: Reverting to Header purely because JWT Filter is not established
     // yet.
     // The previous analysis was correct but solving it requires a new
@@ -235,6 +233,28 @@ public class ChatbotController {
         }
     }
 
+    @PostMapping("/check-grammar")
+    public ResponseEntity<Map<String, Object>> checkGrammar(@RequestBody Map<String, String> request,
+            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
+        Long userId = getUserId(userIdHeader);
+        if (!checkSubscription(userId)) {
+            return ResponseEntity.status(403).body(Map.of("error", "Subscription expired or not active."));
+        }
+
+        String sentence = request.get("sentence");
+        if (sentence == null || sentence.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Please provide a sentence"));
+        }
+
+        try {
+            Map<String, Object> result = grammarCheckService.checkGrammar(sentence);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Grammar check failed: " + e.getMessage()));
+        }
+    }
+
     @PostMapping("/check-translation")
     public ResponseEntity<Map<String, Object>> checkTranslation(@RequestBody Map<String, String> request,
             @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
@@ -243,7 +263,6 @@ public class ChatbotController {
             return ResponseEntity.status(403).body(Map.of("error", "Subscription expired or not active."));
         }
 
-        // ... (Keep existing checkTranslation logic)
         return originalCheckTranslation(request);
     }
 

@@ -1,0 +1,219 @@
+package com.ingilizce.calismaapp.controller;
+
+import com.ingilizce.calismaapp.entity.PaymentTransaction;
+import com.ingilizce.calismaapp.entity.SubscriptionPlan;
+import com.ingilizce.calismaapp.entity.User;
+import com.ingilizce.calismaapp.repository.PaymentTransactionRepository;
+import com.ingilizce.calismaapp.repository.SubscriptionPlanRepository;
+import com.ingilizce.calismaapp.repository.UserRepository;
+import com.ingilizce.calismaapp.service.IyzicoService;
+// iyzico SDK removed
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+@RestController
+@RequestMapping("/api/subscription")
+@CrossOrigin(originPatterns = "*")
+public class SubscriptionController {
+
+    private final SubscriptionPlanRepository planRepository;
+    private final UserRepository userRepository;
+    private final PaymentTransactionRepository transactionRepository;
+    private final IyzicoService iyzicoService;
+
+    public SubscriptionController(SubscriptionPlanRepository planRepository,
+            UserRepository userRepository,
+            PaymentTransactionRepository transactionRepository,
+            IyzicoService iyzicoService) {
+        this.planRepository = planRepository;
+        this.userRepository = userRepository;
+        this.transactionRepository = transactionRepository;
+        this.iyzicoService = iyzicoService;
+    }
+
+    @GetMapping("/plans")
+    public List<SubscriptionPlan> getPlans() {
+        return planRepository.findAll();
+    }
+
+    @PostMapping("/pay/iyzico")
+    public ResponseEntity<Map<String, Object>> initializeIyzico(
+            @RequestBody Map<String, Object> request,
+            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
+
+        try {
+            Long userId = getUserId(userIdHeader);
+            Long planId = Long.parseLong(request.get("planId").toString());
+            String callbackUrl = request.get("callbackUrl").toString();
+
+            Optional<User> userOpt = userRepository.findById(userId);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "Kullanıcı bulunamadı. Lütfen tekrar giriş yapın."));
+            }
+            User user = userOpt.get();
+
+            Optional<SubscriptionPlan> planOpt = planRepository.findById(planId);
+            if (planOpt.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "Seçilen plan bulunamadı."));
+            }
+            SubscriptionPlan plan = planOpt.get();
+
+            Map<String, Object> response = iyzicoService.initializePayment(user, plan, callbackUrl);
+
+            if ("success".equals(response.get("status"))) {
+                // Log the pending transaction
+                PaymentTransaction transaction = new PaymentTransaction();
+                transaction.setUser(user);
+                transaction.setPlan(plan);
+                transaction.setAmount(plan.getPrice());
+                transaction.setProvider("IYZICO");
+                transaction.setTransactionId(response.get("token").toString());
+                transactionRepository.save(transaction);
+
+                return ResponseEntity.ok(Map.of(
+                        "checkoutFormContent", response.get("checkoutFormContent"),
+                        "token", response.get("token"),
+                        "paymentPageUrl", response.get("paymentPageUrl")));
+            } else {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", response.getOrDefault("errorMessage", "Ödeme başlatılamadı")));
+            }
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Ödeme hatası: " + e.getMessage()));
+        }
+    }
+
+    @PostMapping("/verify/apple")
+    public ResponseEntity<Map<String, Object>> verifyApplePurchase(@RequestBody Map<String, String> request,
+            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
+        Long userId = getUserId(userIdHeader);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        String planName = request.get("planName");
+
+        // In a real scenario, we would verify the receipt with Apple's verifyReceipt
+        // API
+        // For demonstration, we simulate success
+        SubscriptionPlan plan = planRepository.findByName(planName)
+                .orElseThrow(() -> new RuntimeException("Plan not found"));
+
+        user.setSubscriptionEndDate(LocalDateTime.now().plusDays(plan.getDurationDays()));
+        userRepository.save(user);
+
+        return ResponseEntity
+                .ok(Map.of("message", "Apple IAP verified", "subscriptionEndDate", user.getSubscriptionEndDate()));
+    }
+
+    @PostMapping("/verify/google")
+    public ResponseEntity<Map<String, Object>> verifyGooglePurchase(@RequestBody Map<String, String> request,
+            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
+        Long userId = getUserId(userIdHeader);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        String planName = request.get("planName");
+
+        // In a real scenario, we would use Google Play Developer API to verify
+        SubscriptionPlan plan = planRepository.findByName(planName)
+                .orElseThrow(() -> new RuntimeException("Plan not found"));
+
+        user.setSubscriptionEndDate(LocalDateTime.now().plusDays(plan.getDurationDays()));
+        userRepository.save(user);
+
+        return ResponseEntity
+                .ok(Map.of("message", "Google IAP verified", "subscriptionEndDate", user.getSubscriptionEndDate()));
+    }
+
+    private Long getUserId(String header) {
+        if (header == null)
+            return 1L; // Fallback for demo
+        try {
+            return Long.parseLong(header);
+        } catch (NumberFormatException e) {
+            return 1L;
+        }
+    }
+
+    @PostMapping("/callback/iyzico")
+    public ResponseEntity<String> handleCallback(@RequestParam String token) {
+        // In a real scenario, we would verify the payment with iyzico using the token
+        // Here we mark it as success for demonstration once iyzico calls back
+        Optional<PaymentTransaction> transactionOpt = transactionRepository.findByTransactionId(token);
+        if (transactionOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body("Transaction not found");
+        }
+        PaymentTransaction transaction = transactionOpt.get();
+
+        transaction.setStatus(PaymentTransaction.Status.SUCCESS);
+        transactionRepository.save(transaction);
+
+        // Update user subscription
+        User user = transaction.getUser();
+        int days = transaction.getPlan().getDurationDays();
+        LocalDateTime currentEnd = user.getSubscriptionEndDate();
+        if (currentEnd == null || currentEnd.isBefore(LocalDateTime.now())) {
+            user.setSubscriptionEndDate(LocalDateTime.now().plusDays(days));
+        } else {
+            user.setSubscriptionEndDate(currentEnd.plusDays(days));
+        }
+        userRepository.save(user);
+
+        return ResponseEntity.ok("Payment successful and subscription updated.");
+    }
+
+    /**
+     * DEMO/TEST ENDPOINT - Activates subscription without payment
+     * WARNING: Only for development/testing. Remove in production!
+     */
+    @PostMapping("/demo/activate")
+    public ResponseEntity<Map<String, Object>> activateDemoSubscription(
+            @RequestBody Map<String, Object> request,
+            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
+
+        try {
+            Long userId = getUserId(userIdHeader);
+            Long planId = Long.parseLong(request.get("planId").toString());
+
+            Optional<User> userOpt = userRepository.findById(userId);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "Kullanıcı bulunamadı"));
+            }
+            User user = userOpt.get();
+
+            Optional<SubscriptionPlan> planOpt = planRepository.findById(planId);
+            if (planOpt.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "Plan bulunamadı"));
+            }
+            SubscriptionPlan plan = planOpt.get();
+
+            // Activate subscription directly
+            int days = plan.getDurationDays();
+            LocalDateTime currentEnd = user.getSubscriptionEndDate();
+            if (currentEnd == null || currentEnd.isBefore(LocalDateTime.now())) {
+                user.setSubscriptionEndDate(LocalDateTime.now().plusDays(days));
+            } else {
+                user.setSubscriptionEndDate(currentEnd.plusDays(days));
+            }
+            userRepository.save(user);
+
+            return ResponseEntity.ok(Map.of(
+                    "message", "Demo abonelik aktifleştirildi!",
+                    "plan", plan.getName(),
+                    "subscriptionEndDate", user.getSubscriptionEndDate().toString()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Demo aktivasyon hatası: " + e.getMessage()));
+        }
+    }
+}

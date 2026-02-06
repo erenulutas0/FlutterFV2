@@ -23,6 +23,10 @@ import '../widgets/modern_card.dart';
 import '../widgets/modern_background.dart';
 import '../widgets/modern_card_background.dart';
 import '../widgets/level_and_length_section.dart';
+import '../services/subscription_service.dart';
+import 'subscription_page.dart';
+import '../providers/app_state_provider.dart';
+import 'grammar_tab.dart';
 
 
 class PracticePage extends StatefulWidget {
@@ -35,6 +39,7 @@ class PracticePage extends StatefulWidget {
 
 class _PracticePageState extends State<PracticePage> with TickerProviderStateMixin {
   final ApiService _apiService = ApiService();
+  final SubscriptionService _subscriptionService = SubscriptionService();
   String _selectedMode = 'Çevirme'; // Çevirme, Okuma, Konuşma
   String _selectedSubMode = 'Seç'; // Seç, Manuel, Karışık
   String _selectedLevel = 'B1';
@@ -70,7 +75,6 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
     super.initState();
     _loadWords();
     _searchController.addListener(_onSearchChanged);
-    _searchController.addListener(_onSearchChanged);
     GlobalState.isMatching.addListener(_updateMatchingState);
     GlobalState.matchmakingService.addListener(_onMatchmakingUpdate);
     if (widget.initialMode != null) {
@@ -90,11 +94,11 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
      );
   }
 
+
   @override
   void didUpdateWidget(PracticePage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.initialMode != null && widget.initialMode != oldWidget.initialMode) {
-      // Only switch if the incoming mode is different and relevant
       setState(() {
         _selectedMode = widget.initialMode!;
       });
@@ -109,7 +113,11 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
     GlobalState.matchmakingService.removeListener(_onMatchmakingUpdate);
     super.dispose();
   }
-
+  
+  // ... (Existing helper methods)
+  // Re-declare _loadWords, _onMatchmakingUpdate... to keep context, but use ... range to skip unmodified methods if possible or include them
+  // For safety, I will include _loadWords and others since they are in the range.
+  
   Future<void> _loadWords() async {
     try {
       final words = await _apiService.getAllWords();
@@ -131,11 +139,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   void _onMatchmakingUpdate() {
     final service = GlobalState.matchmakingService;
     if (service.status == MatchStatus.matched && service.matchInfo != null) {
-      // Bekleme modunu kapat
       GlobalState.isMatching.value = false;
-      
-      // Video Call sayfasına git
-      // Double navigation önlemek için kontrol
       if (ModalRoute.of(context)?.isCurrent == true) {
          Navigator.push(
           context,
@@ -149,12 +153,9 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
             ),
           ),
         ).then((_) {
-           // Geri dönüldüğünde çağrıyı sonlandır
-           service.leftCall(); // Bunu servise eklememiz lazım veya disconnect
+           service.leftCall(); 
         });
-        
-        // Servis durumunu güncelle ki tekrar tetiklenmesin
-        service.setInCall(); // Bunu eklemeliyiz
+        service.setInCall();
       }
     } else if (service.status == MatchStatus.error) {
       GlobalState.isMatching.value = false;
@@ -239,8 +240,6 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
                      style: const TextStyle(color: Color(0xFF22D3EE), fontSize: 18, fontWeight: FontWeight.w500),
                    ),
                    const SizedBox(height: 16),
-                   
-                   // Details Grid wrapped in container with glass effect
                    Container(
                      padding: const EdgeInsets.all(12),
                      decoration: BoxDecoration(
@@ -260,8 +259,6 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
                      ),
                    ),
                    const SizedBox(height: 20),
-                   
-                   // Close Button
                    GestureDetector(
                     onTap: () => Navigator.pop(context),
                     child: ModernCard(
@@ -309,6 +306,21 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
 
   @override
   Widget build(BuildContext context) {
+    final appState = context.watch<AppStateProvider>();
+    final isPro = appState.userInfo?['subscriptionEndDate'] != null;
+    final isLoading = !appState.isInitialized;
+
+    if (isLoading) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF111827),
+        body: Center(child: CircularProgressIndicator(color: Color(0xFF0ea5e9))),
+      );
+    }
+
+    if (!isPro) {
+      return _buildLockedScreen();
+    }
+
     return Scaffold(
       body: Stack(
         children: [
@@ -386,14 +398,18 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
                       borderRadius: BorderRadius.circular(16),
                       padding: const EdgeInsets.all(4),
                       variant: BackgroundVariant.secondary,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          _buildTopTab('Çevirme'),
-                          _buildTopTab('Okuma'),
-                          _buildTopTab('Yazma'),
-                          _buildTopTab('Konuşma'),
-                        ],
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            _buildTopTab('Çevirme'),
+                            _buildTopTab('Okuma'),
+                            _buildTopTab('Yazma'),
+                            _buildTopTab('Gramer'),
+                            _buildTopTab('Konuşma'),
+                            _buildTopTab('Sınavlar'),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -419,6 +435,10 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
       return _buildSpeakingTab();
     } else if (_selectedMode == 'Yazma') {
       return _buildWritingTab();
+    } else if (_selectedMode == 'Sınavlar') {
+      return _buildExamsTab();
+    } else if (_selectedMode == 'Gramer') {
+      return const GrammarTab();
     } else {
       return _buildTranslationTab();
     }
@@ -743,194 +763,200 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
                ),
           const SizedBox(height: 24),
 
-         // 2. Sohbet (Chat) Card
+         // MVP: Sohbet/Chat Card with matching disabled for v1.0
+         // This section contains video matching and chat features
+         // Will be enabled in future social features release
+         /* 
+          // 2. Sohbet (Chat) Card - DISABLED FOR MVP
           ModernCard(showGlow: true, borderRadius: BorderRadius.circular(20),
             child: Column(
              crossAxisAlignment: CrossAxisAlignment.start,
              children: [
-               Row(
-                 children: [
-                   const Icon(Icons.chat_bubble_outline, color: Color(0xFF0ea5e9), size: 28),
-                   const SizedBox(width: 12),
-                   const Text(
-                     'Sohbet',
-                     style: TextStyle(
-                       color: Colors.white,
-                       fontSize: 20,
-                       fontWeight: FontWeight.bold,
-                       ),
-                   ),
-                 ],
-               ),
-               const SizedBox(height: 16),
-               const Text(
-                 'İngilizce pratik yap',
-                 style: TextStyle(color: Colors.white70, fontSize: 14),
-               ),
-               const SizedBox(height: 24),
-               
-                if (_isMatching)
-                  GestureDetector(
-                    onTap: () {
-                       GlobalState.matchmakingService.leaveQueue();
-                       GlobalState.isMatching.value = false;
-                    },
-                    child: ModernCard(
-                    width: double.infinity,
-                    variant: BackgroundVariant.secondary,
-                    showGlow: true,
-                    borderRadius: BorderRadius.circular(12),
-                    showBorder: false,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      child: Center(
-                        child: SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
-                        ),
-                      ),
-                    ),
-                  ),
-                  )
-                else ...[
-                  // Eşleş Button
-                  ModernCard(
-                    width: double.infinity,
-                    variant: BackgroundVariant.accent,
-                    showGlow: true,
-                    borderRadius: BorderRadius.circular(16),
-                    padding: EdgeInsets.zero,
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _startMatchmaking,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.transparent,
-                          shadowColor: Colors.transparent,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                        child: const Center(
-                          child: Text(
-                            'Eşleş',
-                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  
-                  // Sohbete Git Button
-                  ModernCard(
-                    width: double.infinity,
-                    variant: BackgroundVariant.accent,
-                    showGlow: true,
-                    borderRadius: BorderRadius.circular(16),
-                    padding: EdgeInsets.zero,
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (context) => const ChatListPage()),
-                          );
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.transparent,
-                          shadowColor: Colors.transparent,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                        child: const Center(
-                          child: Text(
-                            'Sohbete Git',
-                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+               ...matching and chat code...
              ],
            ),
+          ),
+         */
+
+          // const SizedBox(height: 20);
+
+         // 3. AI Asistanları Animasyonlu Kart - PRO LOCKED
+         _buildProLockedWidget(
+           child: const AnimatedAIChatCard(),
+           featureName: 'AI Asistanları',
          ),
-
-         const SizedBox(height: 20),
-
-         // 3. AI Asistanları Animasyonlu Kart
-         const AnimatedAIChatCard(),
          
          const SizedBox(height: 20),
 
-         // 4. Kendini Sınavlara Hazırla Card
-          ModernCard(showGlow: true, borderRadius: BorderRadius.circular(20),
-            padding: const EdgeInsets.all(20),
-            child: Column(
-             crossAxisAlignment: CrossAxisAlignment.start,
-             children: [
-               Row(
-                 children: [
-                   Container(
-                     padding: const EdgeInsets.all(10),
-                     decoration: BoxDecoration(
-                       color: Colors.white.withOpacity(0.1),
-                       shape: BoxShape.circle,
+         // 4. Kendini Sınavlara Hazırla Card - PRO LOCKED
+         _buildProLockedWidget(
+           featureName: 'IELTS & TOEFL Pratiği',
+           child: ModernCard(showGlow: true, borderRadius: BorderRadius.circular(20),
+             padding: const EdgeInsets.all(20),
+             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.mic_none_outlined, color: Colors.white70, size: 22),
+                    ),
+                    const SizedBox(width: 14),
+                    const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Kendini Sınavlara Hazırla!',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17),
+                        ),
+                        Text(
+                          'IELTS & TOEFL konuşma pratiği yap',
+                          style: TextStyle(color: Colors.white54, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                                    width: double.infinity,
+                   child: ModernCard(
+                     variant: BackgroundVariant.accent,
+                     showGlow: true,
+                     borderRadius: BorderRadius.circular(16),
+                     padding: EdgeInsets.zero,
+                     child: SizedBox(
+                       width: double.infinity,
+                       child: ElevatedButton.icon(
+                         onPressed: () {
+                           Navigator.push(
+                             context,
+                             MaterialPageRoute(builder: (context) => const ExamSelectionPage()),
+                           );
+                         },
+                         icon: const Icon(Icons.menu_book_rounded, size: 18, color: Colors.white),
+                         label: const Text('Sınava Hazırlan', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
+                         style: ElevatedButton.styleFrom(
+                           backgroundColor: Colors.transparent,
+                           shadowColor: Colors.transparent,
+                           padding: const EdgeInsets.symmetric(vertical: 16),
+                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), 
+                         ),
+                       ),
                      ),
-                     child: const Icon(Icons.mic_none_outlined, color: Colors.white70, size: 22),
                    ),
-                   const SizedBox(width: 14),
-                   const Column(
-                     crossAxisAlignment: CrossAxisAlignment.start,
-                     children: [
-                       Text(
-                         'Kendini Sınavlara Hazırla!',
-                         style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17),
-                       ),
-                       Text(
-                         'IELTS & TOEFL konuşma pratiği yap',
-                         style: TextStyle(color: Colors.white54, fontSize: 13),
-                       ),
-                     ],
-                   ),
-                 ],
+                ),
+              ],
+            ),
+          ),
+         ),
+         
+         const SizedBox(height: 80),
+      ],
+    );
+  }
+
+  Widget _buildExamsTab() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Header
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.1),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: const Color(0xFFEF4444), // Red for Exams
+                  width: 2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFFEF4444).withOpacity(0.3),
+                    blurRadius: 12,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.school, color: Colors.white, size: 24),
+            ),
+            const SizedBox(width: 16),
+            const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Sınav Merkezi',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  'YDS, YÖKDİL ve Global Sınavlar',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            )
+          ],
+        ),
+        const SizedBox(height: 24),
+
+        ModernCard(showGlow: true, borderRadius: BorderRadius.circular(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+               const Text(
+                 'Türkiye Sınavları',
+                 style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
                ),
-               const SizedBox(height: 20),
+               const SizedBox(height: 12),
+               const Text(
+                 'ÖSYM formatında hazırlanmış özgün sorularla kendini dene. YDS ve YÖKDİL (Fen/Sağlık/Sosyal) için özel modlar.',
+                 style: TextStyle(color: Colors.white70, fontSize: 14),
+               ),
+               const SizedBox(height: 24),
                SizedBox(
-                                   width: double.infinity,
-                  child: ModernCard(
-                    variant: BackgroundVariant.accent,
-                    showGlow: true,
-                    borderRadius: BorderRadius.circular(16),
-                    padding: EdgeInsets.zero,
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: () {
+                 width: double.infinity,
+                 child: ModernCard(
+                   variant: BackgroundVariant.accent,
+                   showGlow: true,
+                   borderRadius: BorderRadius.circular(16),
+                   padding: EdgeInsets.zero,
+                   child: SizedBox(
+                     width: double.infinity,
+                     child: ElevatedButton(
+                       onPressed: () {
                           Navigator.push(
                             context,
                             MaterialPageRoute(builder: (context) => const ExamSelectionPage()),
                           );
-                        },
-                        icon: const Icon(Icons.menu_book_rounded, size: 18, color: Colors.white),
-                        label: const Text('Sınava Hazırlan', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.transparent,
-                          shadowColor: Colors.transparent,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), 
-                        ),
-                      ),
-                    ),
-                  ),
+                       },
+                       style: ElevatedButton.styleFrom(
+                         backgroundColor: Colors.transparent,
+                         shadowColor: Colors.transparent,
+                         padding: const EdgeInsets.symmetric(vertical: 16),
+                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                       ),
+                       child: const Text('Sınav Merkezine Git', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                     ),
+                   ),
+                 ),
                ),
-             ],
-           ),
-         ),
-         
-         const SizedBox(height: 80),
+            ],
+          ),
+        ),
+        const SizedBox(height: 80),
       ],
     );
   }
@@ -1292,24 +1318,25 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
 
   Widget _buildTopTab(String text) {
     final isSelected = _selectedMode == text;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _selectedMode = text),
-      child: ModernCard(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        borderRadius: BorderRadius.circular(12),
-        variant: isSelected ? BackgroundVariant.accent : BackgroundVariant.secondary,
-        showGlow: isSelected,
-        child: Center(
-          child: Text(
-            text,
-            style: TextStyle(
-              color: isSelected ? Colors.white : Colors.white70,
-              fontWeight: FontWeight.bold,
+    return GestureDetector(
+      onTap: () => setState(() => _selectedMode = text),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        child: ModernCard(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+          borderRadius: BorderRadius.circular(12),
+          variant: isSelected ? BackgroundVariant.accent : BackgroundVariant.secondary,
+          showGlow: isSelected,
+          child: Center(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: isSelected ? Colors.white : Colors.white70,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -1375,5 +1402,229 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
         ),
        ),
      );
+  }
+
+  /// Widget that shows PRO lock overlay for non-subscribers
+  Widget _buildProLockedWidget({required Widget child, required String featureName}) {
+    final isPro = context.watch<AppStateProvider>().userInfo?['subscriptionEndDate'] != null;
+
+    if (isPro) {
+      // PRO user - show content normally
+      return child;
+    }
+    
+    // Non-PRO user - show locked overlay
+    return Stack(
+      children: [
+        // Blurred content
+        ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: ImageFiltered(
+            imageFilter: ImageFilter.blur(sigmaX: 3, sigmaY: 3),
+            child: IgnorePointer(child: child),
+          ),
+        ),
+        // Dark overlay with lock
+        Positioned.fill(
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              color: Colors.black.withOpacity(0.6),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Lock Icon with glow
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFFD700), Color(0xFFFFA500)],
+                    ),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFFFFD700).withOpacity(0.4),
+                        blurRadius: 15,
+                        spreadRadius: 3,
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.lock, color: Colors.white, size: 28),
+                ),
+                const SizedBox(height: 12),
+                // Feature name
+                Text(
+                  featureName,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'PRO Üyelere Özel',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // Upgrade button
+                GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const SubscriptionPage()),
+                  ),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF22D3EE), Color(0xFF3b82f6)],
+                      ),
+                      borderRadius: BorderRadius.circular(25),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF22D3EE).withOpacity(0.4),
+                          blurRadius: 10,
+                        ),
+                      ],
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.flash_on, color: Colors.white, size: 18),
+                        SizedBox(width: 6),
+                        Text(
+                          'PRO\'ya Yükselt',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLockedScreen() {
+    return Scaffold(
+      backgroundColor: const Color(0xFF111827),
+      body: Stack(
+        children: [
+          const AnimatedBackground(isDark: true),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1e293b).withOpacity(0.8),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: const Color(0xFF38bdf8).withOpacity(0.3), width: 2),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF0ea5e9).withOpacity(0.3),
+                          blurRadius: 20,
+                          spreadRadius: 5,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.lock_outline_rounded,
+                      size: 64,
+                      color: Color(0xFF38bdf8),
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                  const Text(
+                    'Pratik Modu Kilitli',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'İleri seviye pratik modlarına erişmek ve dil öğrenme yolculuğunu hızlandırmak için PRO üye olmalısın.',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 16,
+                      height: 1.5,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 48),
+                  ModernCard(
+                    variant: BackgroundVariant.accent,
+                    borderRadius: BorderRadius.circular(16),
+                    padding: EdgeInsets.zero,
+                    showGlow: true,
+                    child: InkWell(
+                      onTap: () async {
+                       await Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const SubscriptionPage()),
+                        );
+                        // Refresh subscription status when returning
+                        if (context.mounted) {
+                          context.read<AppStateProvider>().refreshUserData();
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 32),
+                        alignment: Alignment.center,
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.flash_on, color: Colors.white),
+                            SizedBox(width: 8),
+                            Text(
+                              'PRO\'ya Yükselt',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  TextButton(
+                    onPressed: () {
+                      Navigator.pop(context);
+                    },
+                    child: const Text(
+                      'Ana Sayfaya Dön',
+                      style: TextStyle(
+                        color: Colors.white54,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

@@ -1,6 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'dart:typed_data';
+import 'dart:io';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../widgets/animated_background.dart';
 import '../services/chatbot_service.dart';
 import '../services/piper_tts_service.dart';
@@ -20,12 +26,17 @@ class _ExamChatPageState extends State<ExamChatPage> with TickerProviderStateMix
   final ChatbotService _chatbotService = ChatbotService();
   final PiperTtsService _ttsService = PiperTtsService();
   final AudioPlayer _audioPlayer = AudioPlayer();
+  final FlutterTts _flutterTts = FlutterTts();
   
   final List<ChatMessage> _messages = [];
   bool _isTyping = false;
   bool _isSpeaking = false;
   bool _ttsEnabled = true;
   bool _ttsAvailable = false;
+  
+  // STT
+  late stt.SpeechToText _speech;
+  bool _isListening = false;
   
   String _currentPart = 'part1'; // part1, part2, part3 for IELTS
   
@@ -35,13 +46,26 @@ class _ExamChatPageState extends State<ExamChatPage> with TickerProviderStateMix
   @override
   void initState() {
     super.initState();
+    _speech = stt.SpeechToText();
     _particleController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 20),
     )..repeat();
     
+    // Keep screen on
+    WakelockPlus.enable();
+    
     _checkTtsAvailability();
+    _initFlutterTts();
     _startExamSession();
+  }
+
+  Future<void> _initFlutterTts() async {
+    await _flutterTts.setLanguage("en-US");
+    await _flutterTts.setSpeechRate(0.45); // Slightly slower for exam clarity
+    await _flutterTts.setVolume(1.0);
+    await _flutterTts.setPitch(1.0);
+    await _flutterTts.awaitSpeakCompletion(true);
   }
 
   Future<void> _checkTtsAvailability() async {
@@ -60,10 +84,10 @@ class _ExamChatPageState extends State<ExamChatPage> with TickerProviderStateMix
       welcomeMessage = "Welcome to TOEFL Speaking Practice!\n\n🎯 I'll help you prepare for your TOEFL speaking exam. We'll practice:\n\n• Task 1: Independent Speaking\n• Task 2: Campus Situation\n• Task 3: Academic Course\n• Task 4: Academic Lecture\n\nLet's start with Task 1!";
     }
     
-    _addBotMessage(welcomeMessage);
+    _addBotMessage(welcomeMessage, speak: true);
     
     // Load first question
-    await Future.delayed(const Duration(milliseconds: 1500));
+    await Future.delayed(const Duration(milliseconds: 2000));
     await _loadQuestion();
   }
 
@@ -86,17 +110,19 @@ class _ExamChatPageState extends State<ExamChatPage> with TickerProviderStateMix
     } catch (e) {
       if (mounted) {
         setState(() => _isTyping = false);
-        _addBotMessage('Error loading question. Let\'s try a general question:\n\nTell me about your hometown. What do you like about living there?');
+        _addBotMessage('Error loading question. Let\'s try a general question:\n\nTell me about your hometown. What do you like about living there?', speak: true);
       }
     }
   }
 
   @override
   void dispose() {
+    WakelockPlus.disable();
     _messageController.dispose();
     _scrollController.dispose();
     _particleController.dispose();
     _audioPlayer.dispose();
+    _flutterTts.stop();
     super.dispose();
   }
 
@@ -110,25 +136,56 @@ class _ExamChatPageState extends State<ExamChatPage> with TickerProviderStateMix
     });
     _scrollToBottom();
     
-    if (speak && _ttsEnabled && _ttsAvailable) {
+    if (speak && _ttsEnabled) {
       _speakText(text);
     }
   }
 
   Future<void> _speakText(String text) async {
-    if (_isSpeaking) return;
+    if (_isSpeaking) {
+      await _audioPlayer.stop();
+      await _flutterTts.stop();
+    }
+    
+    // Stop listening while speaking
+    if (_isListening) {
+      await _speech.stop();
+      if (mounted) setState(() => _isListening = false);
+    }
     
     // Clean text for speech (remove emojis and special formatting)
-    String cleanText = text.replaceAll(RegExp(r'[📝🎯•\n]'), ' ').trim();
+    String cleanText = text.replaceAll(RegExp(r'[📝🎯💡•\n]'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
     
     setState(() => _isSpeaking = true);
     
     try {
-      final audioData = await _ttsService.synthesize(cleanText);
+      Uint8List? audioData;
+      
+      // Try Piper TTS first
+      if (_ttsAvailable) {
+        try {
+          audioData = await _ttsService.synthesize(cleanText, voice: 'amy');
+        } catch (e) {
+          debugPrint('Piper TTS error: $e');
+        }
+      }
+      
       if (audioData != null && mounted) {
-        final dataSource = MyCustomSource(audioData);
-        await _audioPlayer.setAudioSource(dataSource);
+        // Play Piper audio
+        final tempDir = await getTemporaryDirectory();
+        final tempFile = File('${tempDir.path}/exam_response.wav');
+        await tempFile.writeAsBytes(audioData);
+        
+        await _audioPlayer.setFilePath(tempFile.path);
         await _audioPlayer.play();
+        
+        await _audioPlayer.playerStateStream.firstWhere(
+          (state) => state.processingState == ProcessingState.completed
+        );
+      } else {
+        // Fallback to system TTS
+        debugPrint('Using fallback TTS');
+        await _flutterTts.speak(cleanText);
       }
     } catch (e) {
       debugPrint('TTS error: $e');
@@ -139,7 +196,87 @@ class _ExamChatPageState extends State<ExamChatPage> with TickerProviderStateMix
     }
   }
 
+  /// User's message'ı sesli dinle (göndermeden önce)
+  Future<void> _playbackUserMessage() async {
+    if (_messageController.text.trim().isEmpty) return;
+    
+    setState(() => _isSpeaking = true);
+    
+    try {
+      await _flutterTts.speak(_messageController.text.trim());
+    } catch (e) {
+      debugPrint('Playback error: $e');
+    } finally {
+      if (mounted) setState(() => _isSpeaking = false);
+    }
+  }
+
+  /// Sesli giriş başlat
+  Future<void> _startListening() async {
+    // Stop any ongoing speech
+    if (_isSpeaking) {
+      await _audioPlayer.stop();
+      await _flutterTts.stop();
+      setState(() => _isSpeaking = false);
+    }
+    
+    var status = await Permission.microphone.request();
+    if (status != PermissionStatus.granted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Mikrofon izni gerekli.')),
+        );
+      }
+      return;
+    }
+
+    if (!_isListening) {
+      bool available = await _speech.initialize(
+        onStatus: (val) {
+          if (val == 'done' || val == 'notListening') {
+            if (mounted) setState(() => _isListening = false);
+          }
+        },
+        onError: (val) => debugPrint('STT Error: $val'),
+      );
+      
+      if (available) {
+        if (mounted) setState(() => _isListening = true);
+        _speech.listen(
+          onResult: (val) {
+            setState(() {
+              _messageController.text = val.recognizedWords;
+            });
+          },
+          listenFor: const Duration(seconds: 120), // 2 minutes for full answer
+          pauseFor: const Duration(seconds: 3),
+          localeId: 'en_US',
+        );
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Ses algılama başlatılamadı.')),
+          );
+        }
+      }
+    }
+  }
+
+  /// Sesli girişi durdur (manuel olarak)
+  void _stopListening() {
+    if (_isListening) {
+      _speech.stop();
+      if (mounted) setState(() => _isListening = false);
+    }
+  }
+
   Future<void> _sendMessage() async {
+    // Stop listening first
+    if (_isListening) {
+      await _speech.stop();
+      if (mounted) setState(() => _isListening = false);
+    }
+    
     if (_messageController.text.trim().isEmpty) return;
     
     final userMessage = _messageController.text.trim();
@@ -178,7 +315,7 @@ class _ExamChatPageState extends State<ExamChatPage> with TickerProviderStateMix
           feedbackMessage += '\n\n💡 Suggestions:\n$suggestions';
         }
         
-        _addBotMessage(feedbackMessage);
+        _addBotMessage(feedbackMessage, speak: true);
         
         // Ask if they want to continue
         await Future.delayed(const Duration(seconds: 2));
@@ -324,7 +461,7 @@ class _ExamChatPageState extends State<ExamChatPage> with TickerProviderStateMix
                     const SizedBox(width: 6),
                     Flexible(
                       child: Text(
-                        'Speaking Practice - $_currentPart',
+                        'Speaking - $_currentPart',
                         style: TextStyle(
                           color: color,
                           fontSize: 12,
@@ -406,17 +543,15 @@ class _ExamChatPageState extends State<ExamChatPage> with TickerProviderStateMix
                       fontWeight: FontWeight.w500,
                     ),
                   ),
-                  if (_ttsAvailable) ...[
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: () => _speakText(message.text),
-                      child: Icon(
-                        _isSpeaking ? Icons.stop : Icons.volume_up,
-                        color: color,
-                        size: 18,
-                      ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: () => _speakText(message.text),
+                    child: Icon(
+                      _isSpeaking ? Icons.stop : Icons.volume_up,
+                      color: color,
+                      size: 18,
                     ),
-                  ],
+                  ),
                 ],
               ),
             ),
@@ -542,23 +677,55 @@ class _ExamChatPageState extends State<ExamChatPage> with TickerProviderStateMix
           Row(
             children: [
               // Mic Button
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: IconButton(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Sesli giriş yakında eklenecek!')),
-                    );
-                  },
-                  icon: const Icon(Icons.mic, color: Colors.white70, size: 22),
+              GestureDetector(
+                onTap: () {
+                  if (_isListening) {
+                    _stopListening();
+                  } else {
+                    _startListening();
+                  }
+                },
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: _isListening ? const Color(0xFFef4444) : Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: _isListening ? [
+                      BoxShadow(
+                        color: const Color(0xFFef4444).withOpacity(0.5),
+                        blurRadius: 10,
+                        spreadRadius: 2,
+                      )
+                    ] : [],
+                  ),
+                  child: Icon(
+                    _isListening ? Icons.stop : Icons.mic,
+                    color: Colors.white,
+                    size: 22,
+                  ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
+              
+              // Playback Button (listen before sending)
+              GestureDetector(
+                onTap: _messageController.text.trim().isNotEmpty ? _playbackUserMessage : null,
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    _isSpeaking ? Icons.pause : Icons.play_arrow,
+                    color: _messageController.text.trim().isNotEmpty ? const Color(0xFF22c55e) : Colors.white24,
+                    size: 22,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
               
               // Text Input
               Expanded(
@@ -573,35 +740,36 @@ class _ExamChatPageState extends State<ExamChatPage> with TickerProviderStateMix
                     controller: _messageController,
                     style: const TextStyle(color: Colors.white),
                     decoration: const InputDecoration(
-                      hintText: 'Type your answer in English...',
+                      hintText: 'Speak or type your answer...',
                       hintStyle: TextStyle(color: Colors.white38, fontSize: 14),
                       border: InputBorder.none,
                       contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                     ),
+                    onChanged: (_) => setState(() {}), // Rebuild for playback button
                     onSubmitted: (_) => _sendMessage(),
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               
               // Send Button
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: color.withOpacity(0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: IconButton(
-                  onPressed: _isTyping ? null : _sendMessage,
-                  icon: const Icon(Icons.send, color: Colors.white, size: 22),
+              GestureDetector(
+                onTap: _isTyping ? null : _sendMessage,
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: color.withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.send, color: Colors.white, size: 22),
                 ),
               ),
             ],
@@ -612,20 +780,27 @@ class _ExamChatPageState extends State<ExamChatPage> with TickerProviderStateMix
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(
-                'Practice ${widget.examType} Speaking with AI',
-                style: const TextStyle(
-                  color: Colors.white38,
-                  fontSize: 12,
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-              ),
-              const SizedBox(width: 6),
-              Icon(
-                Icons.school,
-                color: widget.examType == 'IELTS' 
-                    ? const Color(0xFFdc2626)
-                    : const Color(0xFF2563eb),
-                size: 14,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      color: color,
+                      size: 14,
+                    ),
+                    const SizedBox(width: 6),
+                    const Text(
+                      'Manuel mod: Cevabını gönder butonuyla yolla',
+                      style: TextStyle(color: Colors.white54, fontSize: 11),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),

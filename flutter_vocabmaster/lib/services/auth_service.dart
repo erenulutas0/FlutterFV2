@@ -196,32 +196,37 @@ class AuthService {
         return {'success': false, 'message': 'Giriş iptal edildi'};
       }
 
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-      
-      // Backend'de Google Login endpoint'i olmadığı için
-      // Client-side bir çözüm uyguluyoruz:
-      // Google email'i ile bir hesap oluşturmayı dene (şifre: google_id'nin bir kısmı)
-      // Eğer hesap varsa giriş yap.
-      
-      final email = googleUser.email;
-      final name = googleUser.displayName ?? email.split('@')[0];
-      final password = "google_auth_${googleUser.id}"; // Güvenli değil ama şu anki backend için workaround
-      
-      // Önce giriş yapmayı dene
-      var loginResult = await login(email, password, rememberMe: true);
-      
-      if (loginResult['success'] == true) {
-        return loginResult;
+      // Backend /google-login endpoint'ini kullan
+      final baseUrl = await AppConfig.apiBaseUrl;
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/google-login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'email': googleUser.email,
+          'displayName': googleUser.displayName ?? googleUser.email.split('@')[0],
+          'photoUrl': googleUser.photoUrl,
+          'googleId': googleUser.id,
+          'deviceInfo': 'Flutter Mobile App',
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data['success'] == true) {
+         final userId = data['userId'] ?? 0;
+         // Backend'den sessionToken gelmiyor olabilir bu endpointte, 
+         // dummy token veya backend'i token dönecek şekilde güncellememiz gerekirdi.
+         // Ama şimdilik mevcut login yapısına uyduralım.
+         // AuthController google-login'de token dönmüyor, sadece user dönüyor.
+         // Client side dummy token üretelim:
+         final token = "google_session_${googleUser.id}";
+         
+         await saveSession(token, data['user']);
+         return {'success': true, 'user': data['user']};
       } else {
-        // Giriş başarısızsa (kullanıcı yoksa), kayıt ol
-        var registerResult = await register(name, email, password);
-         if (registerResult['success'] == true) {
-            return registerResult;
-         } else {
-            // Belki şifre yanlıştır (daha önce normal kaydolmuş ama şimdi google ile girmek istiyor)
-            return {'success': false, 'message': 'Bu email ile daha önce farklı bir şifreyle kayıt olunmuş olabilir.'};
-         }
+        return {'success': false, 'message': data['error'] ?? 'Google ile giriş başarısız'};
       }
+
     } catch (e) {
       return {'success': false, 'message': 'Google giriş hatası: $e'};
     }
