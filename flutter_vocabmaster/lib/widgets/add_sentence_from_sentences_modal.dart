@@ -10,6 +10,12 @@ class SentenceItem {
   String selectedWord;
   String selectedWordTurkish;
   bool addToTodaysWords;
+  
+  // Controllers
+  late final TextEditingController englishController;
+  late final TextEditingController turkishController;
+  late final TextEditingController selectedWordController;
+  late final TextEditingController selectedWordTurkishController;
 
   SentenceItem({
     required this.id,
@@ -19,7 +25,19 @@ class SentenceItem {
     this.selectedWord = '',
     this.selectedWordTurkish = '',
     this.addToTodaysWords = false,
-  });
+  }) {
+    englishController = TextEditingController(text: english);
+    turkishController = TextEditingController(text: turkish);
+    selectedWordController = TextEditingController(text: selectedWord);
+    selectedWordTurkishController = TextEditingController(text: selectedWordTurkish);
+  }
+  
+  void dispose() {
+    englishController.dispose();
+    turkishController.dispose();
+    selectedWordController.dispose();
+    selectedWordTurkishController.dispose();
+  }
 }
 
 class AddSentenceFromSentencesModal extends StatefulWidget {
@@ -112,6 +130,9 @@ class _AddSentenceFromSentencesModalState
     _orb2Controller.dispose();
     _orb3Controller.dispose();
     _scrollController.dispose();
+    for (var sentence in sentences) {
+      sentence.dispose();
+    }
     super.dispose();
   }
 
@@ -575,9 +596,18 @@ class _AddSentenceFromSentencesModalState
           // Save Button
           Expanded(
             child: _GradientButton(
-              onPressed: () {
-                widget.onSave(sentences);
-                Navigator.of(context).pop();
+              onPressed: () async {
+                // Controller değerlerini model'e senkronize et
+                for (var sentence in sentences) {
+                  sentence.english = sentence.englishController.text;
+                  sentence.turkish = sentence.turkishController.text;
+                  sentence.selectedWord = sentence.selectedWordController.text;
+                  sentence.selectedWordTurkish = sentence.selectedWordTurkishController.text;
+                }
+                
+                // Async callback'i bekle
+                await widget.onSave(sentences);
+                if (mounted) Navigator.of(context).pop();
               },
               child: const Text(
                 'Cümle Ekle',
@@ -754,7 +784,7 @@ class _SentenceCardState extends State<_SentenceCard> {
                 Expanded(
                   child: _CustomTextField(
                     placeholder: 'İngilizce kelime',
-                    value: widget.sentence.selectedWord,
+                    controller: widget.sentence.selectedWordController,
                     onChanged: (value) => widget.onUpdate('selectedWord', value),
                   ),
                 ),
@@ -762,7 +792,7 @@ class _SentenceCardState extends State<_SentenceCard> {
                 Expanded(
                   child: _CustomTextField(
                     placeholder: 'Türkçe anlamı',
-                    value: widget.sentence.selectedWordTurkish,
+                    controller: widget.sentence.selectedWordTurkishController,
                     onChanged: (value) => widget.onUpdate('selectedWordTurkish', value),
                   ),
                 ),
@@ -854,7 +884,7 @@ class _SentenceCardState extends State<_SentenceCard> {
             
             _CustomTextField(
               placeholder: 'Enter an example sentence...',
-              value: widget.sentence.english,
+              controller: widget.sentence.englishController,
               onChanged: (value) => widget.onUpdate('english', value),
             ),
             
@@ -911,7 +941,7 @@ class _SentenceCardState extends State<_SentenceCard> {
             
             _CustomTextField(
               placeholder: 'Cümlenin Türkçe çevirisi...',
-              value: widget.sentence.turkish,
+              controller: widget.sentence.turkishController,
               onChanged: (value) => widget.onUpdate('turkish', value),
             ),
             
@@ -943,20 +973,19 @@ class _SentenceCardState extends State<_SentenceCard> {
 
 class _CustomTextField extends StatelessWidget {
   final String placeholder;
-  final String value;
+  final TextEditingController controller;
   final ValueChanged<String> onChanged;
 
   const _CustomTextField({
     required this.placeholder,
-    required this.value,
+    required this.controller,
     required this.onChanged,
   });
 
   @override
   Widget build(BuildContext context) {
     return TextField(
-      controller: TextEditingController(text: value)
-        ..selection = TextSelection.collapsed(offset: value.length),
+      controller: controller,
       onChanged: onChanged,
       style: const TextStyle(
         color: SentenceModalColors.textWhite,

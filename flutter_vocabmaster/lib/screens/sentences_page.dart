@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
+import 'package:provider/provider.dart';
 import '../widgets/animated_background.dart';
 import '../models/word.dart';
-import '../models/sentence_practice.dart';
 import '../models/sentence_view_model.dart';
 import '../services/offline_sync_service.dart';
 import '../widgets/add_sentence_from_sentences_modal.dart';
 import '../widgets/modern_card.dart';
 import '../widgets/modern_background.dart';
+import '../providers/app_state_provider.dart';
 
 class SentencesPage extends StatefulWidget {
-  const SentencesPage({Key? key}) : super(key: key);
+  const SentencesPage({super.key});
 
   @override
   State<SentencesPage> createState() => _SentencesPageState();
@@ -18,117 +19,40 @@ class SentencesPage extends StatefulWidget {
 
 class _SentencesPageState extends State<SentencesPage> {
   final OfflineSyncService _offlineSyncService = OfflineSyncService();
-  List<Word> allWords = [];
-  List<SentenceViewModel> allSentences = [];
-  List<SentenceViewModel> filteredSentences = [];
-  bool isLoading = true;
-  bool _isOnline = true;
   String _activeFilter = 'Tümü'; // Tümü, Kolay, Orta, Zor
   final TextEditingController _searchController = TextEditingController();
-
-  // Add Sentence Dialog Controllers
-  final TextEditingController _newWordEnglishController = TextEditingController();
-  final TextEditingController _newWordTurkishController = TextEditingController();
-  final TextEditingController _newSentenceEnglishController = TextEditingController();
-  final TextEditingController _newSentenceTurkishController = TextEditingController();
-  bool _isAddingToDailyWords = false;
-  String _newSentenceDifficulty = 'Kolay';
-  bool _isAddingSentenceState = false;
-
-  // Mapping sentence to its word for display meta-data
-  final Map<int, Word> _sentenceToWordMap = {};
 
   @override
   void initState() {
     super.initState();
-    _isOnline = _offlineSyncService.isOnline;
-    _loadData();
-    _searchController.addListener(_filterSentences);
-    
-    // Online durumu dinle
-    _offlineSyncService.onlineStatus.listen((isOnline) {
-      if (mounted) {
-        setState(() => _isOnline = isOnline);
-        if (isOnline) {
-          _loadData(); // Online olunca yenile
-        }
-      }
-    });
+    _searchController.addListener(_onSearchChanged);
+  }
+  
+  @override
+  void dispose() {
+    _searchController.removeListener(_onSearchChanged);
+    _searchController.dispose();
+    super.dispose();
+  }
+  
+  void _onSearchChanged() {
+    setState(() {}); // Trigger rebuild for filtering
   }
 
-  Future<void> _loadData() async {
-    try {
-      final words = await _offlineSyncService.getAllWords();
-      final practiceSentences = await _offlineSyncService.getAllSentences();
-
-      final List<SentenceViewModel> viewModels = [];
-      final Set<int> seenIds = {};
-
-      // 1. Word Sentences
-      for (var word in words) {
-        for (var s in word.sentences) {
-          if (seenIds.contains(s.id)) continue;
-          seenIds.add(s.id);
-          
-          viewModels.add(SentenceViewModel(
-            id: s.id,
-            sentence: s.sentence,
-            translation: s.translation,
-            difficulty: s.difficulty ?? 'easy',
-            word: word,
-            isPractice: false,
-            date: word.learnedDate,
-          ));
-        }
-      }
-
-      // 2. Practice Sentences
-      for (var s in practiceSentences) {
-        // Deduplication: Only skip if it's NOT a practice-source sentence (e.g. it's a word sentence retrieved via allSentences)
-        // If source is 'practice', we keep it even if ID collides with a Word Sentence (different tables).
-        if (s.source != 'practice' && s.numericId != 0 && seenIds.contains(s.numericId)) continue;
-        
-        viewModels.add(SentenceViewModel(
-          id: s.id,
-          sentence: s.englishSentence,
-          translation: s.turkishTranslation,
-          difficulty: s.difficulty,
-          word: null,
-          isPractice: true,
-          date: s.createdDate ?? DateTime.now(),
-        ));
-      }
-
-      // Sort: Newest first (En yeni en başta)
-      viewModels.sort((a, b) => b.date.compareTo(a.date));
-
-      setState(() {
-        allWords = words;
-        allSentences = viewModels;
-        filteredSentences = viewModels;
-        isLoading = false;
-      });
-    } catch (e) {
-      if (mounted) setState(() => isLoading = false);
-    }
-  }
-
-
-  void _filterSentences() {
+  // Filtreleme metodu - artık AppState'ten gelen verileri filtreler
+  List<SentenceViewModel> _getFilteredSentences(List<SentenceViewModel> allSentences) {
     final query = _searchController.text.toLowerCase();
     
-    setState(() {
-      filteredSentences = allSentences.where((vm) {
-        final matchesQuery = vm.sentence.toLowerCase().contains(query) || 
-                             vm.translation.toLowerCase().contains(query) ||
-                             (vm.word?.englishWord.toLowerCase().contains(query) ?? false);
-                             
-        final matchesFilter = _activeFilter == 'Tümü' || 
-                              _mapDifficulty(vm.difficulty) == _activeFilter;
-        
-        return matchesQuery && matchesFilter;
-      }).toList();
-    });
+    return allSentences.where((vm) {
+      final matchesQuery = vm.sentence.toLowerCase().contains(query) || 
+                           vm.translation.toLowerCase().contains(query) ||
+                           (vm.word?.englishWord.toLowerCase().contains(query) ?? false);
+                           
+      final matchesFilter = _activeFilter == 'Tümü' || 
+                            _mapDifficulty(vm.difficulty) == _activeFilter;
+      
+      return matchesQuery && matchesFilter;
+    }).toList();
   }
   
   String _mapDifficulty(String diff) {
@@ -140,25 +64,23 @@ class _SentencesPageState extends State<SentencesPage> {
 
   void _setActiveFilter(String filter) {
     setState(() => _activeFilter = filter);
-    _filterSentences();
   }
 
   @override
   Widget build(BuildContext context) {
+    // AppStateProvider'dan cümleleri al
+    final appState = context.watch<AppStateProvider>();
+    final allSentences = appState.allSentences;
+    final isLoading = appState.isLoadingSentences;
+    
+    // Filtrelenmiş cümleler
+    final filteredSentences = _getFilteredSentences(allSentences);
+    
     // Calculate stats
     int total = allSentences.length;
-    int easy = allSentences.where((s) {
-      final w = _sentenceToWordMap[s.hashCode];
-      return w != null && w.difficulty == 'easy';
-    }).length;
-    int medium = allSentences.where((s) {
-      final w = _sentenceToWordMap[s.hashCode];
-      return w != null && w.difficulty == 'medium';
-    }).length;
-    int hard = allSentences.where((s) {
-      final w = _sentenceToWordMap[s.hashCode];
-      return w != null && w.difficulty == 'hard';
-    }).length;
+    int easy = allSentences.where((s) => s.difficulty == 'easy').length;
+    int medium = allSentences.where((s) => s.difficulty == 'medium').length;
+    int hard = allSentences.where((s) => s.difficulty == 'hard').length;
 
     return Scaffold(
       floatingActionButton: Padding(
@@ -288,13 +210,21 @@ class _SentencesPageState extends State<SentencesPage> {
                                   mapDifficulty: _mapDifficulty,
                                   onDelete: () async {
                                     try {
+                                      final appState = context.read<AppStateProvider>();
+                                      
+                                      // 🔧 ID'yi int'e çevir (dynamic olabilir)
+                                      // ID'yi direkt kullan (String veya int olabilir)
+                                      final dynamic sentenceId = vm.id;
+                                      
                                       if (vm.isPractice) {
-                                         await _offlineSyncService.deletePracticeSentence(vm.id);
+                                         // 🔥 AppStateProvider üzerinden sil (UI anında güncellenir)
+                                         await appState.deletePracticeSentence(sentenceId);
                                       } else {
                                          if (vm.word != null) {
-                                            await _offlineSyncService.deleteSentenceFromWord(
+                                            // 🔥 AppStateProvider üzerinden sil (UI anında güncellenir)
+                                            await appState.deleteSentenceFromWord(
                                               wordId: vm.word!.id,
-                                              sentenceId: vm.id,
+                                              sentenceId: sentenceId,
                                             );
                                          }
                                       }
@@ -303,7 +233,6 @@ class _SentencesPageState extends State<SentencesPage> {
                                         ScaffoldMessenger.of(context).showSnackBar(
                                           const SnackBar(content: Text('Cümle silindi!'), backgroundColor: Colors.green)
                                         );
-                                        _loadData();
                                       }
                                     } catch (e) {
                                       if (mounted) {
@@ -375,72 +304,32 @@ class _SentencesPageState extends State<SentencesPage> {
     );
   }
 
-  Widget _buildTextField(String hint) {
-    return TextField(
-      style: const TextStyle(color: Colors.white),
-      decoration: InputDecoration(
-        hintText: hint,
-        hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
-        filled: true,
-        fillColor: Colors.white.withOpacity(0.05),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDifficultyDropdown() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: 'Kolay',
-          isExpanded: true,
-          dropdownColor: const Color(0xFF1e1b4b),
-          style: const TextStyle(color: Colors.white),
-          items: ['Kolay', 'Orta', 'Zor'].map((String value) {
-            return DropdownMenuItem<String>(
-              value: value,
-              child: Text(value),
-            );
-          }).toList(),
-          onChanged: (_) {},
-        ),
-      ),
-    );
-  }
   void _showAddNewSentenceDialog() {
+    final appState = context.read<AppStateProvider>();
+    final allWords = appState.allWords;
+    
     AddSentenceFromSentencesModal.show(
       context,
       onSave: (items) async {
-        setState(() => isLoading = true);
-        
         try {
+          int addedCount = 0;
+          
           for (var item in items) {
             String sentence = item.english.trim();
             String translation = item.turkish.trim();
-            if (sentence.isEmpty || translation.isEmpty) continue;
+            // Sadece İngilizce cümle zorunlu, Türkçe opsiyonel
+            if (sentence.isEmpty) continue;
 
             String diff = item.difficulty;
 
             if (!item.addToTodaysWords) {
-                await _offlineSyncService.createSentence(
-                  englishSentence: sentence,
-                  turkishTranslation: translation,
-                  difficulty: diff
-                );
+               // Bağımsız pratik cümlesi - AppStateProvider üzerinden ekle
+               final success = await appState.addPracticeSentence(
+                 englishSentence: sentence,
+                 turkishTranslation: translation,
+                 difficulty: diff,
+               );
+               if (success) addedCount++;
             } else {
                String targetWord = item.selectedWord.trim();
                if (targetWord.isEmpty) targetWord = "Genel";
@@ -455,34 +344,40 @@ class _SentencesPageState extends State<SentencesPage> {
                   wordId = existingWord.id;
                } else {
                   final dialogMeaning = item.selectedWordTurkish.trim().isEmpty ? 'Genel' : item.selectedWordTurkish.trim();
-                  final newWord = await _offlineSyncService.createWord(
+                  // Yeni kelime ekle - AppStateProvider üzerinden
+                  final newWord = await appState.addWord(
                      english: targetWord,
                      turkish: dialogMeaning,
                      addedDate: DateTime.now(),
-                     difficulty: 'medium'
+                     difficulty: 'medium',
                   );
                   wordId = newWord?.id;
                }
 
                if (wordId != null && wordId != 0) {
-                  await _offlineSyncService.addSentenceToWord(
+                  // Kelimeye cümle ekle - AppStateProvider üzerinden
+                  await appState.addSentenceToWord(
                     wordId: wordId,
                     sentence: sentence,
                     translation: translation,
-                    difficulty: diff
+                    difficulty: diff,
                   );
+                  addedCount++;
                }
             }
           }
            
-           if (mounted) {
-             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cümleler eklendi!'), backgroundColor: Colors.green));
-             _loadData();
+           if (mounted && addedCount > 0) {
+             ScaffoldMessenger.of(context).showSnackBar(
+               SnackBar(
+                 content: Text('$addedCount cümle eklendi! +${addedCount * 5} XP'),
+                 backgroundColor: Colors.green,
+               ),
+             );
            }
         } catch (e) {
            if (mounted) {
              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red));
-             setState(() => isLoading = false);
            }
         }
       }

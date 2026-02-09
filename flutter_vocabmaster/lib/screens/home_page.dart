@@ -140,6 +140,22 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
     super.dispose();
   }
 
+  /// Level için minimum XP değerini döndürür
+  int _getLevelMinXP(int level) {
+    if (level <= 1) return 0;
+    if (level == 2) return 100;
+    if (level == 3) return 250;
+    if (level == 4) return 500;
+    if (level == 5) return 1000;
+    if (level == 6) return 2000;
+    if (level == 7) return 3500;
+    if (level == 8) return 5500;
+    if (level == 9) return 8000;
+    if (level == 10) return 11000;
+    // 10. seviyeden sonra her 5000 XP
+    return 15000 + ((level - 11) * 5000);
+  }
+
   Future<void> _loadOnlineUsers() async {
     try {
       final users = await UserDataService().getOnlineUsers();
@@ -444,14 +460,29 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
                                       ),
                                     ),
                                 Flexible(
-                                  child: Text(
-                                    '${user['xp']} / 600',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
+                                  child: Builder(
+                                    builder: (context) {
+                                      // Level-based XP hesaplama
+                                      final totalXP = user['xp'] ?? 0;
+                                      final level = user['level'] ?? 1;
+                                      final xpToNext = user['xpToNextLevel'] ?? 100;
+                                      
+                                      // Mevcut leveldeki ilerleme
+                                      final currentLevelXP = _getLevelMinXP(level);
+                                      final nextLevelXP = _getLevelMinXP(level + 1);
+                                      final xpInCurrentLevel = totalXP - currentLevelXP;
+                                      final xpNeededForLevel = nextLevelXP - currentLevelXP;
+                                      
+                                      return Text(
+                                        '$xpInCurrentLevel / $xpNeededForLevel',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      );
+                                    },
                                   ),
                                 ),
                               ],
@@ -459,17 +490,29 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
                             const SizedBox(height: 6),
                             ClipRRect(
                               borderRadius: BorderRadius.circular(10),
-                              child: LinearProgressIndicator(
-                                value: user['xp'] / 600,
-                                backgroundColor: Colors.white.withOpacity(0.2),
-                                valueColor: const AlwaysStoppedAnimation<Color>(
-                                    Color(0xFF06b6d4)),
-                                minHeight: 8,
+                              child: Builder(
+                                builder: (context) {
+                                  final totalXP = user['xp'] ?? 0;
+                                  final level = user['level'] ?? 1;
+                                  final currentLevelXP = _getLevelMinXP(level);
+                                  final nextLevelXP = _getLevelMinXP(level + 1);
+                                  final xpInCurrentLevel = totalXP - currentLevelXP;
+                                  final xpNeededForLevel = nextLevelXP - currentLevelXP;
+                                  final progress = xpNeededForLevel > 0 ? (xpInCurrentLevel / xpNeededForLevel).clamp(0.0, 1.0) : 0.0;
+                                  
+                                  return LinearProgressIndicator(
+                                    value: progress,
+                                    backgroundColor: Colors.white.withOpacity(0.2),
+                                    valueColor: const AlwaysStoppedAnimation<Color>(
+                                        Color(0xFF06b6d4)),
+                                    minHeight: 8,
+                                  );
+                                },
                               ),
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              'Sonraki seviyeye ${600 - user['xp']} XP kaldı',
+                              'Sonraki seviyeye ${user['xpToNextLevel'] ?? 0} XP kaldı',
                               style: TextStyle(
                                 color: Colors.white.withOpacity(0.6),
                                 fontSize: 9,
@@ -2421,15 +2464,17 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
       final addedDate = DateTime.now();
       
       // AppStateProvider üzerinden kelime ekle - otomatik XP ve stats güncellenir
+      // source: 'daily_word' ile Günün Kelimesi XP'si verilir (+15 XP)
       final word = await appState.addWord(
         english: wordData['word'],
         turkish: "⭐ ${wordData['translation']}",
         addedDate: addedDate,
         difficulty: (wordData['difficulty'] as String? ?? 'Medium').toLowerCase(),
+        source: 'daily_word', // Günün Kelimesi XP türü
       );
 
       if (word != null && withSentence) {
-        // AppStateProvider üzerinden cümle ekle - otomatik XP güncellenir
+        // AppStateProvider üzerinden cümle ekle - otomatik XP güncellenir (+5 XP)
         await appState.addSentenceToWord(
           wordId: word.id,
           sentence: wordData['exampleSentence'],
@@ -2448,8 +2493,8 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
                 Expanded(
                   child: Text(
                     withSentence 
-                        ? 'Kelime ve cümle eklendi! +15 XP' 
-                        : 'Kelime eklendi! +10 XP',
+                        ? 'Kelime ve cümle eklendi! +20 XP' 
+                        : 'Kelime eklendi! +15 XP',
                   ),
                 ),
               ],

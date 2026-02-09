@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../widgets/animated_background.dart';
 import '../services/groq_service.dart';
+import '../providers/app_state_provider.dart';
+import '../services/xp_manager.dart';
 
 class ReadingPracticePage extends StatefulWidget {
   final String level;
@@ -81,7 +84,7 @@ class _ReadingPracticePageState extends State<ReadingPracticePage> {
     });
   }
 
-  void _checkAnswers() {
+  void _checkAnswers() async {
     int correct = 0;
     for (int i = 0; i < _questions.length; i++) {
       final selectedAnswer = _selectedAnswers[i];
@@ -94,6 +97,27 @@ class _ReadingPracticePageState extends State<ReadingPracticePage> {
       _score = correct;
       _showResults = true;
     });
+    
+    // XP ekle - seviyeye göre farklı XP
+    if (mounted) {
+      final appState = context.read<AppStateProvider>();
+      XPActionType xpAction;
+      
+      if (widget.level == 'A1' || widget.level == 'A2') {
+        xpAction = XPActionTypes.readingEasy;
+      } else if (widget.level == 'B1' || widget.level == 'B2') {
+        xpAction = XPActionTypes.readingMedium;
+      } else {
+        xpAction = XPActionTypes.readingHard;
+      }
+      
+      await appState.addXPForAction(xpAction, source: 'Okuma Pratiği');
+      
+      // Mükemmel skor için bonus
+      if (correct == _questions.length && _questions.isNotEmpty) {
+        await appState.addXP(10, reason: 'Mükemmel Okuma Skoru');
+      }
+    }
   }
 
   @override

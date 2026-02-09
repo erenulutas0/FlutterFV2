@@ -107,6 +107,7 @@ class _WordsPageState extends State<WordsPage> {
         turkish: turkish,
         addedDate: _selectedDate,
         difficulty: difficulty,
+        source: 'manual', // Manuel ekleme XP türü
       );
 
       // Formu temizle
@@ -121,7 +122,7 @@ class _WordsPageState extends State<WordsPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Kelime başarıyla eklendi! (+10 XP)'), // XP bilgisini de ekleyelim
+            content: Text('Kelime başarıyla eklendi! (+10 XP)'),
             backgroundColor: Colors.green,
           ),
         );
@@ -165,8 +166,9 @@ class _WordsPageState extends State<WordsPage> {
       return wDate == selectedDateStr;
     }).toList();
     
-    // Sıralama (ID'ye göre ters - en yeni en üstte)
-    _wordsForSelectedDate.sort((a, b) => b.id.compareTo(a.id));
+    // Sıralama (Tarihe göre - en yeni en üstte)
+    // Not: ID'ye göre sıralama offline kelimelerde (negatif ID) sorun çıkarıyordu
+    _wordsForSelectedDate.sort((a, b) => b.learnedDate.compareTo(a.learnedDate));
 
     return Scaffold(
       body: Stack(
@@ -482,12 +484,14 @@ class _WordsPageState extends State<WordsPage> {
                                 onPressed: () async {
                                   Navigator.pop(context);
                                   try {
-                                    await _offlineSyncService.deleteWord(word.id);
+                                    // 🔥 AppStateProvider üzerinden sil (UI anında güncellenir)
+                                    final appState = context.read<AppStateProvider>();
+                                    await appState.deleteWord(word.id);
+                                    
                                     if (mounted) {
                                        ScaffoldMessenger.of(context).showSnackBar(
                                          const SnackBar(content: Text('Kelime ve cümleleri silindi!'), backgroundColor: Colors.green)
                                        );
-                                       _loadWordsForDate(_selectedDate);
                                     }
                                   } catch (e) {
                                     if (mounted) {

@@ -106,6 +106,49 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 🔥 AppStateProvider değiştiğinde kelime listesini güncelle
+    _syncWordsFromProvider();
+  }
+  
+  /// Provider'dan güncel kelimeleri al ve local state'i güncelle
+  void _syncWordsFromProvider() {
+    final appState = Provider.of<AppStateProvider>(context, listen: false);
+    final providerWords = appState.allWords;
+    
+    // Eğer provider'daki kelimeler local state'ten farklıysa güncelle
+    if (providerWords.length != _allWords.length || 
+        (providerWords.isNotEmpty && _allWords.isNotEmpty && 
+         providerWords.first.id != _allWords.first.id)) {
+      
+      final sortedWords = List<Word>.from(providerWords);
+      sortedWords.sort((a, b) => b.learnedDate.compareTo(a.learnedDate));
+      
+      // Arama filtresiyle birlikte güncelle
+      final query = _searchController.text.toLowerCase();
+      final filtered = query.isEmpty 
+          ? sortedWords 
+          : sortedWords.where((w) {
+              return w.englishWord.toLowerCase().contains(query) ||
+                     w.turkishMeaning.toLowerCase().contains(query);
+            }).toList();
+      
+      // Silinmiş kelimeleri seçim listesinden çıkar
+      final validWordIds = providerWords.map((w) => w.id).toSet();
+      _selectedWordIds.removeWhere((id) => !validWordIds.contains(id));
+      
+      if (mounted) {
+        setState(() {
+          _allWords = sortedWords;
+          _filteredWords = filtered;
+          _isLoadingWords = false;
+        });
+      }
+    }
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     _avatarAnimationController.dispose();
@@ -120,13 +163,22 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   
   Future<void> _loadWords() async {
     try {
-      final words = await _apiService.getAllWords();
-      words.sort((a, b) => b.learnedDate.compareTo(a.learnedDate));
+      // Local-first: AppStateProvider'dan kelimeleri al (anında yüklenir)
+      final appState = Provider.of<AppStateProvider>(context, listen: false);
+      final words = appState.allWords;
+      
+      // Eğer kelimeler henüz yüklenmediyse, yenilemeyi tetikle
+      if (words.isEmpty) {
+        await appState.refreshWords();
+      }
+      
+      final sortedWords = List<Word>.from(appState.allWords);
+      sortedWords.sort((a, b) => b.learnedDate.compareTo(a.learnedDate));
       
       if (mounted) {
         setState(() {
-          _allWords = words;
-          _filteredWords = words;
+          _allWords = sortedWords;
+          _filteredWords = sortedWords;
           _isLoadingWords = false;
         });
       }

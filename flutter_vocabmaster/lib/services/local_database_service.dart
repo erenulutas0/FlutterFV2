@@ -241,15 +241,15 @@ class LocalDatabaseService {
     });
 
     // Sync queue'ya ekle
-    await _addToSyncQueue('create', 'words', localId.toString(), {
+    await addToSyncQueue('create', 'words', localId.toString(), {
       'englishWord': english,
       'turkishMeaning': turkish,
       'learnedDate': addedDate.toIso8601String().split('T')[0],
       'difficulty': difficulty,
     });
 
-    // XP ekle (kelime başı 10 XP)
-    await addXp(10);
+    // NOT: XP ekleme işlemi AppStateProvider/XPManager üzerinden yapılıyor
+    // Burada eklenirse çift XP sorunu oluşur
 
     return localId;
   }
@@ -271,6 +271,9 @@ class LocalDatabaseService {
       where: 'id = ? OR localId = ?',
       whereArgs: [id, id],
     );
+    
+    // NOT: XP düşürme işlemi AppStateProvider/XPManager üzerinden yapılıyor
+    // Burada yapılırsa UI senkronizasyonu bozulur
   }
 
   /// Kelimeye cümle ekle (offline)
@@ -297,15 +300,14 @@ class LocalDatabaseService {
     });
 
     // Sync queue'ya ekle
-    await _addToSyncQueue('create', 'sentences', localId.toString(), {
+    await addToSyncQueue('create', 'sentences', localId.toString(), {
       'wordId': wordId,
       'sentence': sentence,
       'translation': translation,
       'difficulty': difficulty,
     });
 
-    // XP ekle (cümle başı 5 XP)
-    await addXp(5);
+    // NOT: XP ekleme işlemi AppStateProvider/XPManager üzerinden yapılıyor
 
     return localId;
   }
@@ -320,11 +322,8 @@ class LocalDatabaseService {
       where: '(id = ? OR localId = ?) AND (wordId = ? OR localWordId = ?)',
       whereArgs: [sentenceId, sentenceId, wordId, wordId],
     );
-  }
-
-  /// Sync queue'ya ekle (public method for delete operations)
-  Future<void> addToSyncQueue(String action, String tableName, String itemId, Map<String, dynamic> data) async {
-    await _addToSyncQueue(action, tableName, itemId, data);
+    
+    // NOT: XP düşürme işlemi AppStateProvider/XPManager üzerinden yapılıyor
   }
 
   // ==================== PRACTICE SENTENCES ====================
@@ -414,8 +413,7 @@ class LocalDatabaseService {
       'difficulty': difficulty.toUpperCase(),
     });
 
-    // XP ekle (cümle başı 5 XP)
-    await addXp(5);
+    // NOT: XP ekleme işlemi AppStateProvider/XPManager üzerinden yapılıyor
 
     return id;
   }
@@ -424,13 +422,17 @@ class LocalDatabaseService {
   Future<void> deletePracticeSentence(String id) async {
     final db = await database;
     await db.delete('practice_sentences', where: 'id = ?', whereArgs: [id]);
+    
+    // NOT: XP düşürme işlemi AppStateProvider/XPManager üzerinden yapılıyor
   }
 
   // ==================== XP MANAGEMENT ====================
 
+
   /// XP ekle
   Future<void> addXp(int amount) async {
     final db = await database;
+
     
     // Check if update affects any rows
     final changes = await db.rawUpdate('''
@@ -449,6 +451,19 @@ class LocalDatabaseService {
         'lastUpdated': DateTime.now().toIso8601String(),
       });
     }
+  }
+
+  /// XP düşür (silme işlemlerinde)
+  Future<void> deductXp(int amount) async {
+    final db = await database;
+    
+    // XP'yi düşür ama 0'ın altına düşürme
+    await db.rawUpdate('''
+      UPDATE user_stats 
+      SET totalXp = MAX(0, totalXp - ?),
+          pendingXp = pendingXp - ?,
+          lastUpdated = ?
+    ''', [amount, amount, DateTime.now().toIso8601String()]);
   }
 
   /// Toplam XP getir
@@ -640,4 +655,31 @@ class LocalDatabaseService {
       'lastUpdated': DateTime.now().toIso8601String(),
     });
   }
+  
+  // ==================== SYNC QUEUE ====================
+  
+  /// Sync queue'daki tüm bekleyen işlemleri getir
+  Future<List<Map<String, dynamic>>> getSyncQueue() async {
+    final db = await database;
+    return await db.query('sync_queue', orderBy: 'createdAt ASC');
+  }
+  
+  /// Sync queue'dan bir item'ı sil
+  Future<void> removeSyncQueueItem(int id) async {
+    final db = await database;
+    await db.delete('sync_queue', where: 'id = ?', whereArgs: [id]);
+  }
+  
+  /// Sync queue'ya item ekle
+  Future<int> addToSyncQueue(String action, String tableName, String itemId, Map<String, dynamic> data) async {
+    final db = await database;
+    return await db.insert('sync_queue', {
+      'action': action,
+      'tableName': tableName,
+      'itemId': itemId,
+      'data': data.isNotEmpty ? jsonEncode(data) : null,
+      'createdAt': DateTime.now().toIso8601String(),
+    });
+  }
+
 }

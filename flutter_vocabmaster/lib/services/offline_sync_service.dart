@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 import '../config/app_config.dart';
 import '../models/word.dart';
 import '../models/sentence_practice.dart';
@@ -14,15 +15,34 @@ class OfflineSyncService {
   factory OfflineSyncService() => _instance;
   OfflineSyncService._internal();
 
+
   final LocalDatabaseService _localDb = LocalDatabaseService();
-  final ApiService _apiService = ApiService();
-  final Connectivity _connectivity = Connectivity();
+  ApiService _apiService = ApiService();
+  Connectivity _connectivity = Connectivity();
+
+  /// Test için bağımlılıkları dışarıdan ver
+  @visibleForTesting
+  void setDependenciesForTesting({ApiService? apiService, Connectivity? connectivity}) {
+    if (apiService != null) _apiService = apiService;
+    if (connectivity != null) _connectivity = connectivity;
+  }
+
+  /// Test için durumu sıfırla
+  @visibleForTesting
+  void resetStatusForTesting() {
+    _isOnline = true;
+    _isSyncing = false;
+    _isCheckingConnectivity = false;
+    _lastConnectivityCheck = DateTime.now(); // Cache süresini başlat
+  }
+
 
   bool _isOnline = true;
+
   bool _isSyncing = false;
   bool _isCheckingConnectivity = false; // Paralel kontrolleri engelle
   DateTime? _lastConnectivityCheck; // Son kontrol zamanı
-  static const Duration _connectivityCacheDuration = Duration(seconds: 30); // 30 saniye cache
+  static const Duration _connectivityCacheDuration = Duration(minutes: 2); // 2 dakika cache - daha az kontrol
   
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   final StreamController<bool> _onlineStatusController = StreamController<bool>.broadcast();
@@ -120,162 +140,307 @@ class OfflineSyncService {
 
   // ==================== WORDS ====================
 
-  /// Tüm kelimeleri getir (online ise sync, offline ise local)
+  /// Tüm kelimeleri getir - LOCAL FIRST yaklaşımı
+  /// Önce local DB'den anında veriler döner, arka planda API sync yapılır
   Future<List<Word>> getAllWords() async {
-    await _checkConnectivity();
+    // 🚀 LOCAL FIRST: Önce local'den hemen döndür
+    final localWords = await _localDb.getAllWords();
     
-    print('📦 OfflineSyncService.getAllWords: isOnline = $_isOnline');
+    if (localWords.isNotEmpty) {
+      // Local veri varsa hemen döndür, arka planda sync yap
+      _syncWordsInBackground();
+      return localWords;
+    }
+    
+    // Local boşsa, connectivity check yap ve API'den çek
+    await _checkConnectivity();
     
     if (_isOnline) {
       try {
-        // Online: API'den al ve local'e kaydet
-        print('📦 OfflineSyncService.getAllWords: Fetching from API...');
         final words = await _apiService.getAllWords();
-        print('📦 OfflineSyncService.getAllWords: API returned ${words.length} words');
-        
         if (words.isNotEmpty) {
           await _localDb.saveAllWords(words);
         }
-        
-        // Return accumulated words (API + local pending)
-        return await _localDb.getAllWords();
+        return words;
       } catch (e) {
-        print('🔴 API hatası, local veriler kullanılıyor: $e');
-        final localWords = await _localDb.getAllWords();
-        print('📦 OfflineSyncService.getAllWords: Local DB returned ${localWords.length} words');
-        return localWords;
+        print('🔴 API hatası: $e');
+        return [];
       }
-    } else {
-      // Offline: Local veritabanından al
-      print('📴 Offline mod: Local kelimeler yükleniyor');
-      final localWords = await _localDb.getAllWords();
-      print('📦 OfflineSyncService.getAllWords: Local DB returned ${localWords.length} words');
-      return localWords;
+    }
+    
+    return [];
+  }
+  
+  /// 🚀 HIZLI: Sadece local veritabanından kelimeleri al (API çağrısı yok)
+  Future<List<Word>> getLocalWords() async {
+    return await _localDb.getAllWords();
+  }
+  
+  /// 🚀 HIZLI: Sadece local veritabanından practice sentences al (API çağrısı yok)
+  Future<List<SentencePractice>> getLocalSentences() async {
+    return await _localDb.getAllPracticeSentences();
+  }
+  
+  /// Bekleyen değişiklikleri API'ye gönder
+  Future<void> syncPendingChanges() async {
+    if (_isSyncing) return;
+    _isSyncing = true;
+    
+    try {
+      await _checkConnectivity();
+      if (_isOnline) {
+        // Sync queue'daki bekleyen işlemleri gönder
+        await _processSyncQueue();
+        // API'den güncel verileri çek
+        _syncWordsInBackground();
+        // Not: Sentences API sync henüz implementasyonda değil
+      }
+    } catch (e) {
+      print('🔄 Sync pending changes error: $e');
+    } finally {
+      _isSyncing = false;
+    }
+  }
+  
+  /// Sync queue'daki işlemleri işle
+  Future<void> _processSyncQueue() async {
+    try {
+      final queue = await _localDb.getSyncQueue();
+      for (var item in queue) {
+        try {
+          // Her bir işlemi API'ye gönder
+          await _processSyncItem(item);
+          // Başarılıysa queue'dan sil
+          await _localDb.removeSyncQueueItem(item['id']);
+        } catch (e) {
+          print('Sync item error: $e');
+        }
+      }
+    } catch (e) {
+      print('Process sync queue error: $e');
+    }
+  }
+  
+  /// Tek bir sync item'ı işle
+  Future<void> _processSyncItem(Map<String, dynamic> item) async {
+    final action = item['action'];
+    final tableName = item['tableName'];
+    final data = item['data'] != null ? jsonDecode(item['data']) : {};
+    
+    switch (action) {
+      case 'create':
+        if (tableName == 'words') {
+          await _apiService.createWord(
+            english: data['english'],
+            turkish: data['turkish'],
+            addedDate: DateTime.parse(data['addedDate']),
+            difficulty: data['difficulty'] ?? 'easy',
+          );
+        } else if (tableName == 'sentences') {
+          await _apiService.addSentenceToWord(
+            wordId: data['wordId'],
+            sentence: data['sentence'],
+            translation: data['translation'],
+            difficulty: data['difficulty'] ?? 'easy',
+          );
+        }
+        break;
+      case 'delete':
+        if (tableName == 'words') {
+          await _apiService.deleteWord(int.parse(item['itemId']));
+        } else if (tableName == 'sentences') {
+          await _apiService.deleteSentenceFromWord(
+            data['wordId'],
+            int.parse(item['itemId']),
+          );
+        }
+        break;
     }
   }
 
-  /// Kelime oluştur
+  /// Arka planda API'den kelimeleri sync et (UI'ı bloklamaz)
+  void _syncWordsInBackground() {
+    // Fire and forget - arka planda çalışır
+    Future(() async {
+      try {
+        if (!_isOnline) {
+          await _checkConnectivity();
+        }
+        if (_isOnline) {
+          final words = await _apiService.getAllWords();
+          if (words.isNotEmpty) {
+            await _localDb.saveAllWords(words);
+          }
+        }
+      } catch (e) {
+        // Sessizce hata logla
+        print('🔄 Background sync error: $e');
+      }
+    });
+  }
+  
+  /// Kelime oluştur - OPTIMISTIC UPDATE
+  /// Önce local'e kaydet (anında görünsün), sonra arka planda API'ye gönder
   Future<Word?> createWord({
     required String english,
     required String turkish,
     required DateTime addedDate,
     String difficulty = 'easy',
   }) async {
-    await _checkConnectivity();
+    // 🚀 OPTIMISTIC UPDATE: Önce local'e kaydet ve hemen döndür
+    final localId = await _localDb.createWordOffline(
+      english: english,
+      turkish: turkish,
+      addedDate: addedDate,
+      difficulty: difficulty,
+    );
     
-    if (_isOnline) {
+    final localWord = Word(
+      id: localId,
+      englishWord: english,
+      turkishMeaning: turkish,
+      learnedDate: addedDate,
+      difficulty: difficulty,
+      sentences: [],
+    );
+    
+    // Arka planda API'ye gönder (UI'ı bloklamaz)
+    _syncWordToAPIInBackground(localWord);
+    
+    return localWord;
+  }
+  
+  /// Arka planda kelimeyi API'ye sync et
+  void _syncWordToAPIInBackground(Word localWord) {
+    Future(() async {
       try {
-        // Online: API'ye gönder ve local'e kaydet
-        final word = await _apiService.createWord(
-          english: english,
-          turkish: turkish,
-          addedDate: addedDate,
-          difficulty: difficulty,
-        );
-        await _localDb.saveWord(word);
-        await _localDb.addXp(10); // XP ekle
-        return word;
+        await _checkConnectivity();
+        if (_isOnline) {
+          final serverWord = await _apiService.createWord(
+            english: localWord.englishWord,
+            turkish: localWord.turkishMeaning,
+            addedDate: localWord.learnedDate,
+            difficulty: localWord.difficulty,
+          );
+          
+          // BAŞARILI: Sync queue'dan bu işlemi sil (ID'ler güncellenmeden önce yap)
+          final queue = await _localDb.getSyncQueue();
+          final item = queue.firstWhere(
+            (q) => q['tableName'] == 'words' && q['itemId'] == localWord.id.toString() && q['action'] == 'create',
+            orElse: () => <String, dynamic>{},
+          );
+          
+          if (item.isNotEmpty) {
+            await _localDb.removeSyncQueueItem(item['id']);
+          }
+          
+          // Şimdi yerel veritabanındaki ID'leri güncelle
+          await _localDb.updateLocalIdToServerId('words', localWord.id, serverWord.id);
+          await _localDb.saveWord(serverWord);
+        }
+        // else: Offline ise queue'da zaten var (createWordOffline ekledi)
       } catch (e) {
-        print('🔴 API hatası, offline kayıt yapılıyor: $e');
-        // Fallback: Offline kaydet
-        final localId = await _localDb.createWordOffline(
-          english: english,
-          turkish: turkish,
-          addedDate: addedDate,
-          difficulty: difficulty,
-        );
-        return Word(
-          id: localId,
-          englishWord: english,
-          turkishMeaning: turkish,
-          learnedDate: addedDate,
-          difficulty: difficulty,
-          sentences: [],
-        );
+        print('🔄 Background word sync error: $e');
+        // Hata durumunda queue'da zaten var, bir şey yapmaya gerek yok
       }
-    } else {
-      // Offline: Local veritabanına kaydet
-      print('📴 Offline mod: Kelime lokal kaydediliyor');
-      final localId = await _localDb.createWordOffline(
-        english: english,
-        turkish: turkish,
-        addedDate: addedDate,
-        difficulty: difficulty,
-      );
-      return Word(
-        id: localId,
-        englishWord: english,
-        turkishMeaning: turkish,
-        learnedDate: addedDate,
-        difficulty: difficulty,
-        sentences: [],
-      );
-    }
+    });
   }
 
-  /// Kelime sil
+
+  /// Kelime sil - OPTIMISTIC UPDATE 
+  /// Önce local'den sil (anında görünsün), sonra arka planda API'ye gönder
   Future<bool> deleteWord(int wordId) async {
-    await _checkConnectivity();
-
-    if (_isOnline && wordId > 0) {
+    // 🚀 OPTIMISTIC UPDATE: Önce local'den sil ve hemen dön
+    await _localDb.deleteWord(wordId);
+    
+    // Arka planda API'ye gönder
+    _deleteWordFromAPIInBackground(wordId);
+    
+    return true;
+  }
+  
+  /// Arka planda kelimeyi API'den sil
+  void _deleteWordFromAPIInBackground(int wordId) {
+    if (wordId <= 0) return; // Negatif ID'ler (local-only) için API çağrısı yapma
+    
+    Future(() async {
       try {
-        await _apiService.deleteWord(wordId);
-        await _localDb.deleteWord(wordId);
-        return true;
+        await _checkConnectivity();
+        if (_isOnline) {
+          await _apiService.deleteWord(wordId);
+        } else {
+          await _localDb.addToSyncQueue('delete', 'words', wordId.toString(), {});
+        }
       } catch (e) {
-        print('🔴 API hatası, offline silme yapılıyor: $e');
-        await _localDb.deleteWord(wordId);
+        print('🔄 Background word delete error: $e');
         await _localDb.addToSyncQueue('delete', 'words', wordId.toString(), {});
-        return true;
       }
-    } else {
-      // Offline
-      await _localDb.deleteWord(wordId);
-      await _localDb.addToSyncQueue('delete', 'words', wordId.toString(), {});
-      return true;
-    }
+    });
   }
 
-  /// Kelimeye cümle ekle
+  /// Kelimeye cümle ekle - OPTIMISTIC UPDATE
+  /// Önce local'e kaydet (anında görünsün), sonra arka planda API'ye gönder
   Future<Word?> addSentenceToWord({
     required int wordId,
     required String sentence,
     required String translation,
     String difficulty = 'easy',
   }) async {
-    await _checkConnectivity();
+    // 🚀 OPTIMISTIC UPDATE: Önce local'e kaydet ve hemen döndür
+    final sentenceId = await _localDb.addSentenceToWordOffline(
+      wordId: wordId,
+      sentence: sentence,
+      translation: translation,
+      difficulty: difficulty,
+    );
     
-    if (_isOnline && wordId > 0) {
+    // Güncel kelimeyi hemen döndür
+    final updatedWord = await _getWordWithNewSentence(wordId, sentenceId, sentence, translation, difficulty);
+    
+    // Arka planda API'ye gönder
+    _syncSentenceToAPIInBackground(wordId, sentence, translation, difficulty);
+    
+    return updatedWord;
+  }
+  
+  /// Arka planda cümleyi API'ye sync et
+  void _syncSentenceToAPIInBackground(int wordId, String sentence, String translation, String difficulty) {
+    if (wordId <= 0) return;
+    
+    Future(() async {
       try {
-        // Online: API'ye gönder
-        final word = await _apiService.addSentenceToWord(
-          wordId: wordId,
-          sentence: sentence,
-          translation: translation,
-          difficulty: difficulty,
-        );
-        await _localDb.saveWord(word);
-        await _localDb.addXp(5); // XP ekle
-        return word;
+        await _checkConnectivity();
+        if (_isOnline) {
+          final word = await _apiService.addSentenceToWord(
+            wordId: wordId,
+            sentence: sentence,
+            translation: translation,
+            difficulty: difficulty,
+          );
+          await _localDb.saveWord(word);
+        }
       } catch (e) {
-        print('🔴 API hatası, offline kayıt yapılıyor: $e');
-        await _localDb.addSentenceToWordOffline(
-          wordId: wordId,
-          sentence: sentence,
-          translation: translation,
-          difficulty: difficulty,
-        );
-        return null;
+        print('🔄 Background sentence sync error: $e');
       }
-    } else {
-      // Offline: Local veritabanına kaydet
-      print('📴 Offline mod: Cümle lokal kaydediliyor');
-      await _localDb.addSentenceToWordOffline(
-        wordId: wordId,
-        sentence: sentence,
-        translation: translation,
-        difficulty: difficulty,
+    });
+  }
+  
+  /// Yeni cümle eklenmiş kelimeyi döndür (offline durumlar için helper)
+  Future<Word?> _getWordWithNewSentence(int wordId, int sentenceId, String sentence, String translation, String difficulty) async {
+    try {
+      // Veritabanı zaten cümleyi içeriyor (addSentenceToWordOffline ile eklendi)
+      // Güncel kelimeyi veritabanından al ve döndür
+      final words = await _localDb.getAllWords();
+      final word = words.firstWhere(
+        (w) => w.id == wordId, 
+        orElse: () => Word(id: -1, englishWord: '', turkishMeaning: '', learnedDate: DateTime.now(), difficulty: 'easy', sentences: [])
       );
+      
+      if (word.id == -1) return null;
+      
+      return word; // Cümle zaten veritabanından alındı, tekrar eklemeye gerek yok
+    } catch (e) {
+      print('Error getting word with new sentence: $e');
       return null;
     }
   }
@@ -311,8 +476,18 @@ class OfflineSyncService {
 
   // ==================== PRACTICE SENTENCES ====================
 
-  /// Tüm practice sentences getir
+  /// Tüm practice sentences getir - LOCAL FIRST yaklaşımı
   Future<List<SentencePractice>> getAllSentences() async {
+    // 🚀 LOCAL FIRST: Önce local'den hemen döndür
+    final localSentences = await _localDb.getAllPracticeSentences();
+    
+    if (localSentences.isNotEmpty) {
+      // Local veri varsa hemen döndür, arka planda sync yap
+      _syncSentencesInBackground();
+      return localSentences;
+    }
+    
+    // Local boşsa, connectivity check yap ve API'den çek
     await _checkConnectivity();
     
     if (_isOnline) {
@@ -323,13 +498,29 @@ class OfflineSyncService {
         }
         return sentences;
       } catch (e) {
-        print('🔴 API hatası, local veriler kullanılıyor: $e');
-        return await _localDb.getAllPracticeSentences();
+        print('🔴 API hatası: $e');
+        return [];
       }
-    } else {
-      print('📴 Offline mod: Local cümleler yükleniyor');
-      return await _localDb.getAllPracticeSentences();
     }
+    
+    return [];
+  }
+  
+  /// Arka planda API'den cümleleri sync et
+  void _syncSentencesInBackground() {
+    Future(() async {
+      try {
+        if (!_isOnline) await _checkConnectivity();
+        if (_isOnline) {
+          final sentences = await _apiService.getAllSentences();
+          if (sentences.isNotEmpty) {
+            await _localDb.saveAllPracticeSentences(sentences);
+          }
+        }
+      } catch (e) {
+        print('🔄 Background sentences sync error: $e');
+      }
+    });
   }
 
   /// Practice sentence oluştur
@@ -348,7 +539,7 @@ class OfflineSyncService {
           difficulty: difficulty,
         );
         await _localDb.savePracticeSentence(sentence);
-        await _localDb.addXp(5); // XP ekle
+        // XP artık AppStateProvider tarafından yönetiliyor
         return sentence;
       } catch (e) {
         print('🔴 API hatası, offline kayıt yapılıyor: $e');
@@ -517,137 +708,6 @@ class OfflineSyncService {
       print('🔴 Senkronizasyon hatası: $e');
       _isSyncing = false;
       return false;
-    }
-  }
-
-  /// Tek bir sync item'ı işle
-  Future<void> _processSyncItem(Map<String, dynamic> item) async {
-    final action = item['action'] as String;
-    final tableName = item['tableName'] as String;
-    var itemId = item['itemId'] as String; // Var because we might use it as int
-    final dataStr = item['data'] as String;
-    
-    Map<String, dynamic> data = {};
-    try {
-      if (dataStr.isNotEmpty) {
-        data = jsonDecode(dataStr);
-      }
-    } catch (e) {
-      print('JSON decode warning: $e');
-    }
-
-    if (tableName == 'words') {
-      if (action == 'create') {
-        final localId = int.tryParse(itemId) ?? 0;
-        final localWords = await _localDb.getAllWords();
-        final localWord = localWords.firstWhere(
-          (w) => w.id == localId,
-          orElse: () => Word(id: 0, englishWord: '', turkishMeaning: '', learnedDate: DateTime.now(), difficulty: 'easy', sentences: []),
-        );
-
-        if (localWord.id != 0 && localWord.englishWord.isNotEmpty) {
-          final serverWord = await _apiService.createWord(
-            english: localWord.englishWord,
-            turkish: localWord.turkishMeaning,
-            addedDate: localWord.learnedDate,
-            difficulty: localWord.difficulty,
-          );
-          
-          await _localDb.updateLocalIdToServerId('words', localId, serverWord.id);
-        }
-      } else if (action == 'delete') {
-         final id = int.tryParse(itemId) ?? 0;
-         if (id > 0) {
-            await _apiService.deleteWord(id);
-         }
-      }
-    } else if (tableName == 'sentences') {
-      if (action == 'create') {
-        final localId = int.tryParse(itemId) ?? 0;
-        // DB'den güncel veriyi al (wordId güncellenmiş olabilir)
-        // Sentences tablosunda id veya localId ile bul
-        final db = await _localDb.database;
-        final results = await db.query('sentences', where: 'localId = ?', whereArgs: [localId]);
-        
-        if (results.isNotEmpty) {
-          final sFunc = results.first;
-          final wordId = sFunc['wordId'] as int? ?? 0;
-          final sentence = sFunc['sentence'] as String;
-          final translation = sFunc['translation'] as String;
-          final difficulty = sFunc['difficulty'] as String;
-          
-          if (wordId > 0) {
-             final serverWord = await _apiService.addSentenceToWord(
-               wordId: wordId,
-               sentence: sentence,
-               translation: translation,
-               difficulty: difficulty,
-             );
-             
-             // Server'dan dönen kelimenin içinden cümleyi bulup ID'sini almamız lazım
-             // Ama addSentenceToWord Word dönüyor.
-             // En son eklenen cümle mi?
-             // Basitleştirme: Server ID'si olmadan updateLocalIdToServerId çağıramayız doğru düzgün.
-             // API addSentenceToWord yeni cümleyi döndürseydi iyiydi.
-             // Word dönüyor. Word'ün cümlelerinde bizim cümleyi bulacağız.
-             if (serverWord != null && serverWord.sentences.isNotEmpty) {
-               // Eşleşen cümleyi bul
-               final serverSentenceList = serverWord.sentences.where(
-                 (s) => s.sentence == sentence && s.translation == translation
-               ).toList();
-               
-               if (serverSentenceList.isNotEmpty) {
-                 // En sonuncuyu al (varsayım)
-                 final serverSentence = serverSentenceList.last;
-                 await _localDb.updateLocalIdToServerId('sentences', localId, serverSentence.id);
-               }
-             }
-          }
-        }
-      } else if (action == 'delete') {
-         int sentenceId = int.tryParse(itemId) ?? 0;
-         int wordId = data['wordId'] is int ? data['wordId'] : int.tryParse(data['wordId'].toString()) ?? 0;
-         
-         // wordId negatifse (offline oluşturulmuşsa), words tablosundan güncel ID'yi bul
-         if (wordId < 0) {
-           final db = await _localDb.database;
-           final results = await db.query('words', columns: ['id'], where: 'localId = ?', whereArgs: [wordId]);
-           if (results.isNotEmpty) {
-             wordId = results.first['id'] as int;
-           }
-         }
-         
-         // Eğer wordId ve sentenceId pozitif ise sil
-         if (wordId > 0 && sentenceId > 0) {
-           await _apiService.deleteSentenceFromWord(wordId, sentenceId);
-         }
-      }
-    } else if (tableName == 'practice_sentences') {
-      if (action == 'create') {
-        final localSentences = await _localDb.getAllPracticeSentences();
-        final localSentence = localSentences.firstWhere(
-          (s) => s.id == itemId,
-          orElse: () => SentencePractice(id: '', englishSentence: '', turkishTranslation: '', difficulty: 'EASY', createdDate: DateTime.now(), source: 'practice'),
-        );
-
-        if (localSentence.id.isNotEmpty && localSentence.englishSentence.isNotEmpty) {
-          final serverSentence = await _apiService.createSentence(
-            englishSentence: localSentence.englishSentence,
-            turkishTranslation: localSentence.turkishTranslation,
-            difficulty: localSentence.difficulty,
-          );
-          
-          // Delete local temporary ID and save server sentence
-          await _localDb.deletePracticeSentence(itemId);
-          await _localDb.savePracticeSentence(serverSentence);
-        }
-      } else if (action == 'delete') {
-         // Local veya temp ID değilse sil
-         if (!itemId.startsWith('local_') && !itemId.startsWith('temp_')) {
-             final apiId = itemId.replaceFirst('practice_', '');
-             await _apiService.deleteSentence(apiId);
-         }
-      }
     }
   }
 

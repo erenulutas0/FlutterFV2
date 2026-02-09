@@ -2,12 +2,15 @@ import 'dart:ui';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:provider/provider.dart';
 import '../widgets/animated_background.dart';
 import '../models/word.dart';
 import '../services/api_service.dart';
 import '../widgets/modern_card.dart';
 import '../widgets/modern_background.dart';
-import '../main.dart'; 
+import '../main.dart';
+import '../providers/app_state_provider.dart';
+import '../services/xp_manager.dart'; 
 
 class RepeatPage extends StatefulWidget {
   const RepeatPage({Key? key}) : super(key: key);
@@ -123,9 +126,15 @@ class _RepeatPageState extends State<RepeatPage> with TickerProviderStateMixin {
     await flutterTts.speak(word);
   }
 
-  void _markAsLearned() {
+  Future<void> _markAsLearned() async {
+    // XP ekle
+    if (mounted) {
+      final appState = context.read<AppStateProvider>();
+      await appState.addXPForAction(XPActionTypes.reviewComplete, source: 'Tekrar');
+    }
+    
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Öğrenildi olarak işaretlendi!'), duration: Duration(milliseconds: 500)),
+      const SnackBar(content: Text('Öğrenildi olarak işaretlendi! (+5 XP)'), duration: Duration(milliseconds: 800)),
     );
     _handleNext();
   }

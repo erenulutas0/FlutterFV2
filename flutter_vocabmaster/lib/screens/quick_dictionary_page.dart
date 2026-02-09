@@ -378,11 +378,13 @@ class _QuickDictionaryPageState extends State<QuickDictionaryPage> {
       final addedDate = DateTime.now();
       
       // AppStateProvider üzerinden ekle - otomatik XP ve stats güncellenir
+      // source: 'quick_dictionary' ile Hızlı Sözlük XP'si verilir (+10 XP)
       final word = await appState.addWord(
         english: _searchedWord,
         turkish: '(${meaning.type}) ${meaning.turkishMeaning}',
         addedDate: addedDate,
         difficulty: difficulty,
+        source: 'quick_dictionary', // Hızlı Sözlük XP türü
       );
       
       // Eğer örnek cümle varsa onu da ekle (ve +5 XP daha kazan)

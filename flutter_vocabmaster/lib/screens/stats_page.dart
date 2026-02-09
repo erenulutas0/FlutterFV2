@@ -40,37 +40,22 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   Future<void> _loadStats() async {
-    // Arka planda API'den en güncel istatistikleri çek
-
     try {
-      final stats = await _userDataService.getAllStats();
-      final weekly = await _userDataService.getWeeklyActivity();
+      // AppState'i yenile
+      final appState = context.read<AppStateProvider>();
+      await appState.refreshUserData();
+      
+      // Achievements'ı ayrıca yükle
       final achievements = await _userDataService.getAchievements();
-
+      
       if (mounted) {
         setState(() {
           if (achievements.isNotEmpty) _achievements = achievements;
           _isLoading = false;
         });
-        
-        // Global State'i güncelle
-        try {
-          final appState = context.read<AppStateProvider>();
-          
-          appState.updateUserStats({
-            'totalWords': stats['totalWords'],
-            'streak': stats['streak'],
-            'xp': stats['totalXp'] ?? 0,
-            'level': stats['level'] ?? 1,
-          });
-          
-          if (weekly.isNotEmpty) {
-            appState.updateWeeklyActivity(weekly);
-          }
-        } catch (_) {}
       }
     } catch (e) {
-      debugPrint("API veri çekme hatası: $e");
+      debugPrint("Stats yükleme hatası: $e");
       if (mounted) setState(() => _isLoading = false);
     }
   }
