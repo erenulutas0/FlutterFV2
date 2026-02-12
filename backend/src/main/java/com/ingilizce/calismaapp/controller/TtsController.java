@@ -1,6 +1,8 @@
 package com.ingilizce.calismaapp.controller;
 
 import com.ingilizce.calismaapp.service.PiperTtsService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -11,6 +13,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/tts")
 public class TtsController {
+    private static final Logger log = LoggerFactory.getLogger(TtsController.class);
 
     @Autowired
     private PiperTtsService piperTtsService;
@@ -46,7 +49,7 @@ public class TtsController {
         } catch (Exception e) {
             Map<String, Object> error = new HashMap<>();
             error.put("error", "Failed to synthesize: " + e.getMessage());
-            e.printStackTrace();
+            log.error("Failed to synthesize speech via Piper TTS", e);
             return ResponseEntity.internalServerError().body(error);
         }
     }
@@ -56,7 +59,7 @@ public class TtsController {
         Map<String, Object> status = new HashMap<>();
         boolean available = piperTtsService.isAvailable();
         status.put("available", available);
-        status.put("voices", new String[] { "lessac", "amy", "alan" });
+        status.put("voices", piperTtsService.getSupportedVoices());
         return ResponseEntity.ok(status);
     }
 }

@@ -63,14 +63,9 @@ public class UserController {
     // Heartbeat endpoint - call this periodically to update online status
     @PostMapping("/heartbeat")
     public ResponseEntity<Map<String, Object>> heartbeat(
-            @RequestHeader("X-User-Id") String userIdHeader) {
-        try {
-            Long userId = Long.parseLong(userIdHeader);
-            userService.updateLastSeen(userId);
-            return ResponseEntity.ok(Map.of("status", "ok", "timestamp", LocalDateTime.now().toString()));
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
-        }
+            @RequestHeader("X-User-Id") Long userId) {
+        userService.updateLastSeen(userId);
+        return ResponseEntity.ok(Map.of("status", "ok", "timestamp", LocalDateTime.now().toString()));
     }
 
     // Admin/Test endpoint to extend subscription

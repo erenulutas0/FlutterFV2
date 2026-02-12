@@ -1,0 +1,73 @@
+groups:
+  - name: chatbot-cache-observability
+    rules:
+      - record: chatbot_cache_lookup_rps:rate5m
+        expr: |
+          sum(
+            rate({__name__=~"chatbot_sentences_cache_lookup_total(_total)?", outcome=~"hit|miss|error"}[5m])
+          )
+
+      - record: chatbot_cache_hit_ratio:ratio5m
+        expr: |
+          sum(
+            rate({__name__=~"chatbot_sentences_cache_lookup_total(_total)?", outcome="hit"}[5m])
+          )
+          /
+          clamp_min(
+            sum(
+              rate({__name__=~"chatbot_sentences_cache_lookup_total(_total)?", outcome=~"hit|miss|error"}[5m])
+            ),
+            0.000001
+          )
+
+      - record: chatbot_cache_error_rate:ratio5m
+        expr: |
+          sum(
+            rate({__name__=~"chatbot_sentences_cache_lookup_total(_total)?", outcome="error"}[5m])
+          )
+          /
+          clamp_min(
+            sum(
+              rate({__name__=~"chatbot_sentences_cache_lookup_total(_total)?", outcome=~"hit|miss|error"}[5m])
+            ),
+            0.000001
+          )
+
+      - record: chatbot_cache_lookup_latency_seconds:avg5m
+        expr: |
+          sum(rate(chatbot_sentences_cache_lookup_latency_seconds_sum{outcome=~"hit|miss|error"}[5m]))
+          /
+          clamp_min(
+            sum(rate(chatbot_sentences_cache_lookup_latency_seconds_count{outcome=~"hit|miss|error"}[5m])),
+            0.000001
+          )
+
+      - alert: ChatbotCacheHitRatioLow
+        expr: chatbot_cache_hit_ratio:ratio5m < 0.70
+        for: 15m
+        labels:
+          severity: warning
+          component: chatbot-cache
+        annotations:
+          summary: "Chatbot cache hit ratio is low"
+          description: "Hit ratio is {{ $value | printf \"%.2f\" }} over the last 5m (threshold 0.70)."
+
+      - alert: ChatbotCacheErrorRateHigh
+        expr: chatbot_cache_error_rate:ratio5m > 0.05
+        for: 10m
+        labels:
+          severity: critical
+          component: chatbot-cache
+        annotations:
+          summary: "Chatbot cache error rate is high"
+          description: "Error rate is {{ $value | printf \"%.2f\" }} over the last 5m (threshold 0.05)."
+
+      - alert: ChatbotCacheLookupLatencyHigh
+        expr: chatbot_cache_lookup_latency_seconds:avg5m > 0.80
+        for: 10m
+        labels:
+          severity: warning
+          component: chatbot-cache
+        annotations:
+          summary: "Chatbot cache lookup latency is high"
+          description: "Average lookup latency is {{ $value | printf \"%.3f\" }}s over the last 5m (threshold 0.80s)."

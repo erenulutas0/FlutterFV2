@@ -1,10 +1,12 @@
 package com.ingilizce.calismaapp.config;
 
 import com.corundumstudio.socketio.SocketIOServer;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
+@ConditionalOnProperty(name = "app.socketio.enabled", havingValue = "true", matchIfMissing = false)
 public class SocketIOConfig {
 
     @Bean

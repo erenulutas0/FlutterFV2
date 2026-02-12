@@ -36,13 +36,14 @@ public class SRSService {
      * 
      * @return List of words to review
      */
-    public List<Word> getWordsForReview() {
+    public List<Word> getWordsForReview(Long userId) {
+        validateUserId(userId);
         LocalDate today = LocalDate.now();
-        logger.info("Getting words for review (today: {})", today);
+        logger.info("Getting words for review (userId={}, today={})", userId, today);
 
         // Find words where next_review_date <= today
-        List<Word> reviewWords = wordRepository.findByNextReviewDateLessThanEqual(today);
-        logger.info("Found {} words for review", reviewWords.size());
+        List<Word> reviewWords = wordRepository.findByUserIdAndNextReviewDateLessThanEqual(userId, today);
+        logger.info("Found {} words for review (userId={})", reviewWords.size(), userId);
 
         return reviewWords;
     }
@@ -61,13 +62,14 @@ public class SRSService {
      * @return Updated word
      */
     @Transactional
-    public Word submitReview(Long wordId, int quality) {
+    public Word submitReview(Long userId, Long wordId, int quality) {
+        validateUserId(userId);
         if (quality < 0 || quality > 5) {
             throw new IllegalArgumentException("Quality must be between 0 and 5");
         }
 
-        Word word = wordRepository.findById(wordId)
-                .orElseThrow(() -> new RuntimeException("Word not found: " + wordId));
+        Word word = wordRepository.findByIdAndUserId(wordId, userId)
+                .orElseThrow(() -> new RuntimeException("Word not found for user: " + wordId));
 
         logger.info("Submitting review for word '{}' with quality {}", word.getEnglishWord(), quality);
 
@@ -116,8 +118,8 @@ public class SRSService {
                 break; // Again (Teselli puanı)
         }
 
-        progressService.awardXp(xpEarned, "Review: " + word.getEnglishWord() + " (Quality: " + quality + ")");
-        progressService.updateStreak(); // Update daily streak
+        progressService.awardXp(userId, xpEarned, "Review: " + word.getEnglishWord() + " (Quality: " + quality + ")");
+        progressService.updateStreak(userId); // Update daily streak
 
         return savedWord;
     }
@@ -191,26 +193,33 @@ public class SRSService {
      * 
      * @return Map of statistics
      */
-    public java.util.Map<String, Object> getStats() {
+    public java.util.Map<String, Object> getStats(Long userId) {
+        validateUserId(userId);
         java.util.Map<String, Object> stats = new java.util.HashMap<>();
 
         LocalDate today = LocalDate.now();
 
         // Words due today
-        List<Word> dueToday = wordRepository.findByNextReviewDateLessThanEqual(today);
+        List<Word> dueToday = wordRepository.findByUserIdAndNextReviewDateLessThanEqual(userId, today);
         stats.put("dueToday", dueToday.size());
 
         // Total words
-        long totalWords = wordRepository.count();
+        long totalWords = wordRepository.countByUserId(userId);
         stats.put("totalWords", totalWords);
 
         // Words reviewed (review_count > 0)
-        List<Word> reviewedWords = wordRepository.findByReviewCountGreaterThan(0);
+        List<Word> reviewedWords = wordRepository.findByUserIdAndReviewCountGreaterThan(userId, 0);
         stats.put("reviewedWords", reviewedWords.size());
 
-        logger.info("SRS Stats: dueToday={}, totalWords={}, reviewedWords={}",
-                dueToday.size(), totalWords, reviewedWords.size());
+        logger.info("SRS Stats (userId={}): dueToday={}, totalWords={}, reviewedWords={}",
+                userId, dueToday.size(), totalWords, reviewedWords.size());
 
         return stats;
+    }
+
+    private void validateUserId(Long userId) {
+        if (userId == null || userId <= 0) {
+            throw new IllegalArgumentException("X-User-Id must be a positive number");
+        }
     }
 }

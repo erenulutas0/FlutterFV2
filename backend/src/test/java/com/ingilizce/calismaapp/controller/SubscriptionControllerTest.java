@@ -21,6 +21,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -76,8 +78,12 @@ public class SubscriptionControllerTest {
                 @Test
                 @DisplayName("Should return all available plans")
                 void testGetPlans() throws Exception {
+                        Mockito.when(planRepository.findAll()).thenReturn(List.of(monthlyPlan, annualPlan));
+
                         mockMvc.perform(get("/api/subscription/plans"))
-                                        .andExpect(status().isOk());
+                                        .andExpect(status().isOk())
+                                        .andExpect(jsonPath("$[0].name").value("PRO_MONTHLY"))
+                                        .andExpect(jsonPath("$[1].name").value("PRO_ANNUAL"));
                 }
         }
 
@@ -170,6 +176,41 @@ public class SubscriptionControllerTest {
                                         .andExpect(status().isBadRequest())
                                         .andExpect(jsonPath("$.error").exists());
                 }
+
+                @Test
+                @DisplayName("Should return bad request when user header is invalid")
+                void testInitializeIyzicoInvalidHeaderReturnsBadRequest() throws Exception {
+
+                        Map<String, Object> request = Map.of(
+                                        "planId", 1,
+                                        "callbackUrl", "http://localhost/callback");
+
+                        mockMvc.perform(post("/api/subscription/pay/iyzico")
+                                        .header("X-User-Id", "abc")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(request)))
+                                        .andExpect(status().isBadRequest());
+                }
+
+                @Test
+                @DisplayName("Should return server error when iyzico throws exception")
+                void testInitializeIyzicoException() throws Exception {
+                        Mockito.when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+                        Mockito.when(planRepository.findById(1L)).thenReturn(Optional.of(monthlyPlan));
+                        Mockito.when(iyzicoService.initializePayment(any(), any(), anyString()))
+                                        .thenThrow(new RuntimeException("gateway down"));
+
+                        Map<String, Object> request = Map.of(
+                                        "planId", 1,
+                                        "callbackUrl", "http://localhost/callback");
+
+                        mockMvc.perform(post("/api/subscription/pay/iyzico")
+                                        .header("X-User-Id", "1")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(request)))
+                                        .andExpect(status().isInternalServerError())
+                                        .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("gateway down")));
+                }
         }
 
         @Nested
@@ -184,7 +225,7 @@ public class SubscriptionControllerTest {
                         transaction.setPlan(monthlyPlan);
                         transaction.setTransactionId("test-token");
 
-                        Mockito.when(transactionRepository.findByTransactionId("test-token"))
+                        Mockito.when(transactionRepository.findByTransactionIdWithUserAndPlan("test-token"))
                                         .thenReturn(Optional.of(transaction));
 
                         mockMvc.perform(post("/api/subscription/callback/iyzico")
@@ -199,12 +240,56 @@ public class SubscriptionControllerTest {
                 @Test
                 @DisplayName("Should return error for invalid token")
                 void testHandleCallbackNotFound() throws Exception {
-                        Mockito.when(transactionRepository.findByTransactionId("wrong-token"))
+                        Mockito.when(transactionRepository.findByTransactionIdWithUserAndPlan("wrong-token"))
                                         .thenReturn(Optional.empty());
 
                         mockMvc.perform(post("/api/subscription/callback/iyzico")
                                         .param("token", "wrong-token"))
                                         .andExpect(status().isBadRequest());
+                }
+
+                @Test
+                @DisplayName("Should extend from current end date when subscription already active")
+                void testHandleCallbackExtendsActiveSubscription() throws Exception {
+                        LocalDateTime existingEnd = LocalDateTime.now().plusDays(5);
+                        testUser.setSubscriptionEndDate(existingEnd);
+
+                        com.ingilizce.calismaapp.entity.PaymentTransaction transaction = new com.ingilizce.calismaapp.entity.PaymentTransaction();
+                        transaction.setUser(testUser);
+                        transaction.setPlan(monthlyPlan);
+                        transaction.setTransactionId("active-token");
+
+                        Mockito.when(transactionRepository.findByTransactionIdWithUserAndPlan("active-token"))
+                                        .thenReturn(Optional.of(transaction));
+
+                        mockMvc.perform(post("/api/subscription/callback/iyzico")
+                                        .param("token", "active-token"))
+                                        .andExpect(status().isOk());
+
+                        Mockito.verify(userRepository).save(argThat(
+                                        user -> user.getSubscriptionEndDate() != null
+                                                        && user.getSubscriptionEndDate()
+                                                                        .isAfter(existingEnd.plusDays(monthlyPlan.getDurationDays() - 1))));
+                }
+
+                @Test
+                @DisplayName("Should be idempotent when callback token is processed more than once")
+                void testHandleCallbackAlreadyProcessed() throws Exception {
+                        com.ingilizce.calismaapp.entity.PaymentTransaction transaction = new com.ingilizce.calismaapp.entity.PaymentTransaction();
+                        transaction.setUser(testUser);
+                        transaction.setPlan(monthlyPlan);
+                        transaction.setTransactionId("already-token");
+                        transaction.setStatus(com.ingilizce.calismaapp.entity.PaymentTransaction.Status.SUCCESS);
+
+                        Mockito.when(transactionRepository.findByTransactionIdWithUserAndPlan("already-token"))
+                                        .thenReturn(Optional.of(transaction));
+
+                        mockMvc.perform(post("/api/subscription/callback/iyzico")
+                                        .param("token", "already-token"))
+                                        .andExpect(status().isOk())
+                                        .andExpect(content().string("Payment already processed."));
+
+                        Mockito.verify(userRepository, Mockito.never()).save(any());
                 }
         }
 
@@ -249,6 +334,40 @@ public class SubscriptionControllerTest {
                                         .content(objectMapper.writeValueAsString(request)))
                                         .andExpect(status().is5xxServerError());
                 }
+
+                @Test
+                @DisplayName("Should return error when Google user not found")
+                void testVerifyGooglePurchaseUserNotFound() throws Exception {
+                        Mockito.when(userRepository.findById(99L)).thenReturn(Optional.empty());
+
+                        Map<String, String> request = Map.of(
+                                        "planName", "PRO_MONTHLY",
+                                        "purchaseToken", "token");
+
+                        mockMvc.perform(post("/api/subscription/verify/google")
+                                        .header("X-User-Id", "99")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(request)))
+                                        .andExpect(status().is5xxServerError())
+                                        .andExpect(jsonPath("$.error").value("User not found"));
+                }
+
+                @Test
+                @DisplayName("Should handle unexpected Google verify exception")
+                void testVerifyGooglePurchaseException() throws Exception {
+                        Mockito.when(userRepository.findById(1L)).thenThrow(new RuntimeException("google verify failed"));
+
+                        Map<String, String> request = Map.of(
+                                        "planName", "PRO_MONTHLY",
+                                        "purchaseToken", "token");
+
+                        mockMvc.perform(post("/api/subscription/verify/google")
+                                        .header("X-User-Id", "1")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(request)))
+                                        .andExpect(status().is5xxServerError())
+                                        .andExpect(jsonPath("$.error").value("google verify failed"));
+                }
         }
 
         @Nested
@@ -290,6 +409,146 @@ public class SubscriptionControllerTest {
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content(objectMapper.writeValueAsString(request)))
                                         .andExpect(status().is5xxServerError());
+                }
+
+                @Test
+                @DisplayName("Should return error when Apple user not found")
+                void testVerifyApplePurchaseUserNotFound() throws Exception {
+                        Mockito.when(userRepository.findById(100L)).thenReturn(Optional.empty());
+
+                        Map<String, String> request = Map.of(
+                                        "planName", "PRO_ANNUAL",
+                                        "receiptData", "receipt");
+
+                        mockMvc.perform(post("/api/subscription/verify/apple")
+                                        .header("X-User-Id", "100")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(request)))
+                                        .andExpect(status().is5xxServerError())
+                                        .andExpect(jsonPath("$.error").value("User not found"));
+                }
+
+                @Test
+                @DisplayName("Should return bad request when Apple header is missing")
+                void testVerifyApplePurchaseMissingHeaderReturnsBadRequest() throws Exception {
+                        Map<String, String> request = Map.of(
+                                        "planName", "PRO_ANNUAL",
+                                        "receiptData", "apple-receipt-data-base64");
+
+                        mockMvc.perform(post("/api/subscription/verify/apple")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(request)))
+                                        .andExpect(status().isBadRequest());
+                }
+
+                @Test
+                @DisplayName("Should handle unexpected Apple verify exception")
+                void testVerifyApplePurchaseException() throws Exception {
+                        Mockito.when(userRepository.findById(1L)).thenThrow(new RuntimeException("apple verify failed"));
+
+                        Map<String, String> request = Map.of(
+                                        "planName", "PRO_ANNUAL",
+                                        "receiptData", "receipt");
+
+                        mockMvc.perform(post("/api/subscription/verify/apple")
+                                        .header("X-User-Id", "1")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(request)))
+                                        .andExpect(status().is5xxServerError())
+                                        .andExpect(jsonPath("$.error").value("apple verify failed"));
+                }
+        }
+
+        @Nested
+        @DisplayName("POST /api/subscription/demo/activate")
+        class DemoActivateTests {
+
+                @Test
+                @DisplayName("Should activate demo subscription")
+                void testActivateDemoSubscriptionSuccess() throws Exception {
+                        Mockito.when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+                        Mockito.when(planRepository.findById(1L)).thenReturn(Optional.of(monthlyPlan));
+
+                        Map<String, Object> request = Map.of("planId", 1);
+
+                        mockMvc.perform(post("/api/subscription/demo/activate")
+                                        .header("X-User-Id", "1")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(request)))
+                                        .andExpect(status().isOk())
+                                        .andExpect(jsonPath("$.plan").value("PRO_MONTHLY"))
+                                        .andExpect(jsonPath("$.subscriptionEndDate").exists());
+
+                        Mockito.verify(userRepository).save(any(User.class));
+                }
+
+                @Test
+                @DisplayName("Should return bad request when demo user not found")
+                void testActivateDemoSubscriptionUserNotFound() throws Exception {
+                        Mockito.when(userRepository.findById(99L)).thenReturn(Optional.empty());
+
+                        Map<String, Object> request = Map.of("planId", 1);
+
+                        mockMvc.perform(post("/api/subscription/demo/activate")
+                                        .header("X-User-Id", "99")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(request)))
+                                        .andExpect(status().isBadRequest())
+                                        .andExpect(jsonPath("$.error").value("Kullanıcı bulunamadı"));
+                }
+
+                @Test
+                @DisplayName("Should return bad request when demo plan not found")
+                void testActivateDemoSubscriptionPlanNotFound() throws Exception {
+                        Mockito.when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+                        Mockito.when(planRepository.findById(999L)).thenReturn(Optional.empty());
+
+                        Map<String, Object> request = Map.of("planId", 999);
+
+                        mockMvc.perform(post("/api/subscription/demo/activate")
+                                        .header("X-User-Id", "1")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(request)))
+                                        .andExpect(status().isBadRequest())
+                                        .andExpect(jsonPath("$.error").value("Plan bulunamadı"));
+                }
+
+                @Test
+                @DisplayName("Should return server error when demo payload is invalid")
+                void testActivateDemoSubscriptionInvalidPayload() throws Exception {
+                        Mockito.when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+
+                        Map<String, Object> request = Map.of("invalid", 1);
+
+                        mockMvc.perform(post("/api/subscription/demo/activate")
+                                        .header("X-User-Id", "1")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(request)))
+                                        .andExpect(status().isInternalServerError())
+                                        .andExpect(jsonPath("$.error").exists());
+                }
+
+                @Test
+                @DisplayName("Should extend existing active subscription in demo activate flow")
+                void testActivateDemoSubscriptionExtendsActiveSubscription() throws Exception {
+                        LocalDateTime existingEnd = LocalDateTime.now().plusDays(3);
+                        testUser.setSubscriptionEndDate(existingEnd);
+
+                        Mockito.when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+                        Mockito.when(planRepository.findById(1L)).thenReturn(Optional.of(monthlyPlan));
+
+                        Map<String, Object> request = Map.of("planId", 1);
+
+                        mockMvc.perform(post("/api/subscription/demo/activate")
+                                        .header("X-User-Id", "1")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(request)))
+                                        .andExpect(status().isOk());
+
+                        Mockito.verify(userRepository).save(argThat(
+                                        user -> user.getSubscriptionEndDate() != null
+                                                        && user.getSubscriptionEndDate()
+                                                                        .isAfter(existingEnd.plusDays(monthlyPlan.getDurationDays() - 1))));
                 }
         }
 }

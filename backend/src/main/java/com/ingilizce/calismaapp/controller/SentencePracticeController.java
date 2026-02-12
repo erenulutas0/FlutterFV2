@@ -4,7 +4,11 @@ import com.ingilizce.calismaapp.entity.SentencePractice;
 import com.ingilizce.calismaapp.entity.Sentence;
 import com.ingilizce.calismaapp.service.SentencePracticeService;
 import com.ingilizce.calismaapp.repository.SentenceRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,6 +22,7 @@ import java.util.HashMap;
 @RestController
 @RequestMapping("/api/sentences")
 public class SentencePracticeController {
+    private static final Logger log = LoggerFactory.getLogger(SentencePracticeController.class);
 
     @Autowired
     private SentencePracticeService sentencePracticeService;
@@ -25,27 +30,21 @@ public class SentencePracticeController {
     @Autowired
     private SentenceRepository sentenceRepository;
 
-    private Long getUserId(String userIdHeader) {
-        if (userIdHeader != null && !userIdHeader.isEmpty()) {
-            try {
-                return Long.parseLong(userIdHeader);
-            } catch (NumberFormatException e) {
-                return 1L;
-            }
-        }
-        return 1L;
-    }
-
     // Get all sentences from both tables (User Scoped)
     @GetMapping
     public ResponseEntity<List<Map<String, Object>>> getAllSentences(
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "100") int size) {
+        int normalizedPage = Math.max(page, 0);
+        int normalizedSize = Math.min(Math.max(size, 1), 200);
         List<Map<String, Object>> allSentences = new ArrayList<>();
 
         // Get sentences from sentence_practices table
-        List<SentencePractice> practiceSentences = sentencePracticeService.getAllSentences(userId);
-        System.out.println("Found " + practiceSentences.size() + " practice sentences for user " + userId);
+        List<SentencePractice> practiceSentences = sentencePracticeService
+                .getPracticeSentencesPage(userId, normalizedPage, normalizedSize)
+                .getContent();
+        log.debug("Found {} practice sentences for user {}", practiceSentences.size(), userId);
         for (SentencePractice sp : practiceSentences) {
             Map<String, Object> sentenceMap = new HashMap<>();
             sentenceMap.put("id", "practice_" + sp.getId());
@@ -58,8 +57,10 @@ public class SentencePracticeController {
         }
 
         // Get sentences from sentences table with word information
-        List<Sentence> wordSentences = sentenceRepository.findAllWithWordByUserId(userId);
-        System.out.println("Found " + wordSentences.size() + " word sentences for user " + userId);
+        List<Sentence> wordSentences = sentenceRepository
+                .findAllWithWordByUserId(userId, PageRequest.of(normalizedPage, normalizedSize))
+                .getContent();
+        log.debug("Found {} word sentences for user {}", wordSentences.size(), userId);
         for (Sentence s : wordSentences) {
             Map<String, Object> sentenceMap = new HashMap<>();
             sentenceMap.put("id", "word_" + s.getId());
@@ -85,18 +86,30 @@ public class SentencePracticeController {
         return ResponseEntity.ok(allSentences);
     }
 
+    @GetMapping("/practice/paged")
+    public ResponseEntity<Page<SentencePractice>> getPracticeSentencesPaged(
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        int normalizedPage = Math.max(page, 0);
+        int normalizedSize = Math.min(Math.max(size, 1), 200);
+        return ResponseEntity.ok(
+                sentencePracticeService.getPracticeSentencesPage(userId, normalizedPage,
+                        normalizedSize));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<SentencePractice> getSentenceById(@PathVariable Long id,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
+            @RequestHeader("X-User-Id") Long userId) {
         Optional<SentencePractice> sentence = sentencePracticeService.getSentenceByIdAndUser(id,
-                getUserId(userIdHeader));
+                userId);
         return sentence.map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
     }
 
     @PostMapping
     public ResponseEntity<SentencePractice> createSentence(@RequestBody SentencePractice sentencePractice,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        sentencePractice.setUserId(getUserId(userIdHeader));
+            @RequestHeader("X-User-Id") Long userId) {
+        sentencePractice.setUserId(userId);
         SentencePractice savedSentence = sentencePracticeService.saveSentence(sentencePractice);
         return ResponseEntity.ok(savedSentence);
     }
@@ -104,9 +117,9 @@ public class SentencePracticeController {
     @PutMapping("/{id}")
     public ResponseEntity<SentencePractice> updateSentence(@PathVariable Long id,
             @RequestBody SentencePractice sentencePractice,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
+            @RequestHeader("X-User-Id") Long userId) {
         SentencePractice updatedSentence = sentencePracticeService.updateSentence(id, sentencePractice,
-                getUserId(userIdHeader));
+                userId);
         if (updatedSentence != null) {
             return ResponseEntity.ok(updatedSentence);
         }
@@ -115,40 +128,22 @@ public class SentencePracticeController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteSentence(@PathVariable String id,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         try {
             if (id.startsWith("practice_")) {
-                Long numericId = Long.parseLong(id.substring(8));
+                Long numericId = Long.parseLong(id.substring(9));
                 boolean deleted = sentencePracticeService.deleteSentence(numericId, userId);
                 if (deleted) {
                     return ResponseEntity.ok().build();
                 }
                 return ResponseEntity.notFound().build();
             } else if (id.startsWith("word_")) {
-                // Word sentences deletion logic should verify user ownership too
-                // We don't have a secure delete in SentenceRepository yet, so we fetch and
-                // check (inefficient but safe-ish)
-                // Ideally move this to a Service. For now:
                 Long sentenceId = Long.parseLong(id.substring(5));
-                // We need to verify this sentence belongs to a word owned by userId
-                // Since this is a bit complex logic inside controller, better to use
-                // WordService or SentencePracticeService
-                // But for now, we leave it as is or do a quick check?
-                // Let's assume WordService.deleteSentence handles ownership now!
-                // Yes, WordService.deleteSentence(wordId, sentenceId, userId) exists.
-                // But here we only have sentenceId. We need to find the wordId.
-
-                // Let's just delete directly IF we can verify ownership.
-                // Simple workaround for now: Allow if logged in (UserId=1/Valid).
-                // Proper fix: Update SentenceRepository to deleteByDetailsAndUserId
-                // Or: findById, check word.userId.
-
-                sentenceRepository.deleteById(sentenceId);
-                // TODO: Add ownership check here! This is a gap.
-                // However, WordService.deleteSentence is the preferred way.
-                // Front end uses this global ID ("word_123") which is tricky.
-
+                Optional<Sentence> sentence = sentenceRepository.findByIdAndWordUserId(sentenceId, userId);
+                if (sentence.isEmpty()) {
+                    return ResponseEntity.notFound().build();
+                }
+                sentenceRepository.delete(sentence.get());
                 return ResponseEntity.ok().build();
             } else {
                 Long numericId = Long.parseLong(id);
@@ -161,18 +156,18 @@ public class SentencePracticeController {
         } catch (NumberFormatException e) {
             return ResponseEntity.badRequest().build();
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Sentence delete failed for id={} userId={}: {}", id, userId, e.getMessage());
             return ResponseEntity.internalServerError().build();
         }
     }
 
     @GetMapping("/difficulty/{difficulty}")
     public ResponseEntity<List<SentencePractice>> getSentencesByDifficulty(@PathVariable String difficulty,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
+            @RequestHeader("X-User-Id") Long userId) {
         try {
             SentencePractice.DifficultyLevel difficultyLevel = SentencePractice.DifficultyLevel
                     .valueOf(difficulty.toUpperCase());
-            List<SentencePractice> sentences = sentencePracticeService.getSentencesByDifficulty(getUserId(userIdHeader),
+            List<SentencePractice> sentences = sentencePracticeService.getSentencesByDifficulty(userId,
                     difficultyLevel);
             return ResponseEntity.ok(sentences);
         } catch (IllegalArgumentException e) {
@@ -182,10 +177,10 @@ public class SentencePracticeController {
 
     @GetMapping("/date/{date}")
     public ResponseEntity<List<SentencePractice>> getSentencesByDate(@PathVariable String date,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
+            @RequestHeader("X-User-Id") Long userId) {
         try {
             LocalDate localDate = LocalDate.parse(date);
-            List<SentencePractice> sentences = sentencePracticeService.getSentencesByDate(getUserId(userIdHeader),
+            List<SentencePractice> sentences = sentencePracticeService.getSentencesByDate(userId,
                     localDate);
             return ResponseEntity.ok(sentences);
         } catch (Exception e) {
@@ -195,8 +190,8 @@ public class SentencePracticeController {
 
     @GetMapping("/dates")
     public ResponseEntity<List<LocalDate>> getAllDistinctDates(
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        List<LocalDate> dates = sentencePracticeService.getAllDistinctDates(getUserId(userIdHeader));
+            @RequestHeader("X-User-Id") Long userId) {
+        List<LocalDate> dates = sentencePracticeService.getAllDistinctDates(userId);
         return ResponseEntity.ok(dates);
     }
 
@@ -204,11 +199,11 @@ public class SentencePracticeController {
     public ResponseEntity<List<SentencePractice>> getSentencesByDateRange(
             @RequestParam String startDate,
             @RequestParam String endDate,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
+            @RequestHeader("X-User-Id") Long userId) {
         try {
             LocalDate start = LocalDate.parse(startDate);
             LocalDate end = LocalDate.parse(endDate);
-            List<SentencePractice> sentences = sentencePracticeService.getSentencesByDateRange(getUserId(userIdHeader),
+            List<SentencePractice> sentences = sentencePracticeService.getSentencesByDateRange(userId,
                     start, end);
             return ResponseEntity.ok(sentences);
         } catch (Exception e) {
@@ -218,8 +213,7 @@ public class SentencePracticeController {
 
     @GetMapping("/stats")
     public ResponseEntity<Object> getStatistics(
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
 
         // Count from sentence_practices table
         long practiceTotal = sentencePracticeService.getTotalSentenceCount(userId);

@@ -4,12 +4,15 @@ import com.ingilizce.calismaapp.entity.Notification;
 import com.ingilizce.calismaapp.entity.User;
 import com.ingilizce.calismaapp.repository.UserRepository;
 import com.ingilizce.calismaapp.service.NotificationService;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.NoSuchElementException;
 
 @RestController
+@ConditionalOnProperty(name = "app.features.community.enabled", havingValue = "true", matchIfMissing = false)
 @RequestMapping("/api/notifications")
 public class NotificationController {
 
@@ -21,16 +24,14 @@ public class NotificationController {
         this.userRepository = userRepository;
     }
 
-    private User getUserFromHeader(String userIdHeader) {
-        if (userIdHeader == null)
-            throw new RuntimeException("Unauthorized");
-        return userRepository.findById(Long.parseLong(userIdHeader))
-                .orElseThrow(() -> new RuntimeException("User not found"));
+    private User getUserFromHeader(Long userId) {
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new NoSuchElementException("User not found"));
     }
 
     @GetMapping
-    public ResponseEntity<List<Notification>> getUserNotifications(@RequestHeader("X-User-Id") String userIdHeader) {
-        User user = getUserFromHeader(userIdHeader);
+    public ResponseEntity<List<Notification>> getUserNotifications(@RequestHeader("X-User-Id") Long userId) {
+        User user = getUserFromHeader(userId);
         return ResponseEntity.ok(notificationService.getUserNotifications(user));
     }
 

@@ -14,7 +14,6 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/srs")
-@CrossOrigin(originPatterns = "*")
 public class SRSController {
 
     @Autowired
@@ -26,9 +25,9 @@ public class SRSController {
      * @return List of words to review
      */
     @GetMapping("/review-words")
-    public ResponseEntity<List<Word>> getReviewWords() {
+    public ResponseEntity<List<Word>> getReviewWords(@RequestHeader("X-User-Id") Long userId) {
         try {
-            List<Word> words = srsService.getWordsForReview();
+            List<Word> words = srsService.getWordsForReview(userId);
             return ResponseEntity.ok(words);
         } catch (Exception e) {
             return ResponseEntity.internalServerError().build();
@@ -48,12 +47,13 @@ public class SRSController {
      *         }
      */
     @PostMapping("/submit-review")
-    public ResponseEntity<Word> submitReview(@RequestBody Map<String, Object> request) {
+    public ResponseEntity<Word> submitReview(@RequestHeader("X-User-Id") Long userId,
+            @RequestBody Map<String, Object> request) {
         try {
             Long wordId = Long.valueOf(request.get("wordId").toString());
             int quality = Integer.parseInt(request.get("quality").toString());
 
-            Word updatedWord = srsService.submitReview(wordId, quality);
+            Word updatedWord = srsService.submitReview(userId, wordId, quality);
             return ResponseEntity.ok(updatedWord);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().build();
@@ -75,9 +75,9 @@ public class SRSController {
      *         }
      */
     @GetMapping("/stats")
-    public ResponseEntity<Map<String, Object>> getStats() {
+    public ResponseEntity<Map<String, Object>> getStats(@RequestHeader("X-User-Id") Long userId) {
         try {
-            Map<String, Object> stats = srsService.getStats();
+            Map<String, Object> stats = srsService.getStats(userId);
             return ResponseEntity.ok(stats);
         } catch (Exception e) {
             return ResponseEntity.internalServerError().build();

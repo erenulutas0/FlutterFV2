@@ -25,6 +25,8 @@ class AppStateProvider extends ChangeNotifier {
       _userStats['xp'] = totalXP;
       _userStats['level'] = _xpManager.calculateLevel(totalXP);
       _userStats['xpToNextLevel'] = _xpManager.xpForNextLevel(totalXP);
+      _userStats['weeklyXP'] = (_userStats['weeklyXP'] ?? 0) + addedXP;
+      _userStats = Map<String, dynamic>.from(_userStats);
       notifyListeners();
     });
   }
@@ -393,11 +395,6 @@ class AppStateProvider extends ChangeNotifier {
     required String difficulty,
     String? source,
   }) async {
-    // 🆔 Transaction ID oluştur ÖNCE - içerik tabanlı (kelime+tarih)
-    // Bu sayede aynı kelime aynı gün tekrar eklenirse XP verilmez
-    final dateStr = addedDate.toIso8601String().split('T')[0];
-    final txId = 'word_${english.toLowerCase().hashCode}_$dateStr';
-    
     try {
       final newWord = await _offlineSyncService.createWord(
         english: english,
@@ -411,6 +408,9 @@ class AppStateProvider extends ChangeNotifier {
         // 🎯 Anlık istatistik güncellemesi (streak, weeklyActivity dahil)
         await incrementLearnedToday(); // totalWords ve learnedToday artırır + streak günceller
         
+        // 🆔 Transaction ID: kelime ID'si (deterministik ve çakışmasız)
+        final txId = 'word_id_${newWord.id}';
+
         // XP ekle - kaynağa göre farklı XP türü (transactionId ile)
         if (source == 'daily_word') {
           await addXPForAction(XPActionTypes.dailyWordLearn, source: 'Günün Kelimesi', transactionId: txId);
@@ -955,4 +955,26 @@ class AppStateProvider extends ChangeNotifier {
 
   /// XP Manager getter (diğer servisler için)
   XPManager get xpManager => _xpManager;
+
+  // ═══════════════════════════════════════════════════════════════
+  // DAILY WORD HELPERS
+  // ═══════════════════════════════════════════════════════════════
+
+  Word? findWordByEnglish(String english) {
+    final target = english.trim().toLowerCase();
+    if (target.isEmpty) return null;
+    try {
+      return _allWords.firstWhere(
+        (w) => (w.englishWord).trim().toLowerCase() == target,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool hasSentenceForWord(Word word, String sentence) {
+    final target = sentence.trim().toLowerCase();
+    if (target.isEmpty) return false;
+    return word.sentences.any((s) => s.sentence.trim().toLowerCase() == target);
+  }
 }

@@ -3,16 +3,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import '../widgets/modern_card.dart';
 import '../widgets/modern_background.dart';
-import '../services/user_data_service.dart';
+import 'package:provider/provider.dart';
+import '../providers/app_state_provider.dart';
+import '../models/word.dart';
 
 class WordOfTheDayModal extends StatefulWidget {
   final Map<String, dynamic> wordData;
   final VoidCallback onClose;
+  final bool enableAnimations;
+  final bool enableTts;
+  final int initialStep;
 
   const WordOfTheDayModal({
     Key? key,
     required this.wordData,
     required this.onClose,
+    this.enableAnimations = true,
+    this.enableTts = true,
+    this.initialStep = 0,
   }) : super(key: key);
 
   @override
@@ -34,24 +42,32 @@ class _WordOfTheDayModalState extends State<WordOfTheDayModal> with TickerProvid
   
   // Utils
   bool _isAdding = false;
-  bool _added = false;
 
   @override
   void initState() {
     super.initState();
-    _initTts();
+    _currentStep = widget.initialStep.clamp(0, _totalSteps - 1);
+    if (widget.enableTts) {
+      _initTts();
+    }
     _prepareQuiz();
     
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
-    )..repeat(reverse: true);
+    );
+
+    if (widget.enableAnimations) {
+      _pulseController.repeat(reverse: true);
+    }
   }
 
   @override
   void dispose() {
     _pulseController.dispose();
-    _flutterTts.stop();
+    if (widget.enableTts) {
+      _flutterTts.stop();
+    }
     super.dispose();
   }
 
@@ -76,37 +92,40 @@ class _WordOfTheDayModalState extends State<WordOfTheDayModal> with TickerProvid
     await _flutterTts.speak(text);
   }
 
-  Future<void> _addToWords({bool withSentence = false}) async {
-    if (_added) return;
+  Future<void> _addToWords({required bool withSentence, required bool wordAdded, required bool sentenceAdded}) async {
+    if (_isAdding) return;
+    if (wordAdded && (!withSentence || sentenceAdded)) return;
+
     setState(() => _isAdding = true);
 
     try {
-      final userDateService = UserDataService();
+      final appState = context.read<AppStateProvider>();
       final addedDate = DateTime.now();
-      
-      final word = await userDateService.createWord(
-        english: widget.wordData['word'],
-        turkish: "⭐ ${widget.wordData['translation']}", 
-        addedDate: addedDate,
-        difficulty: (widget.wordData['difficulty'] as String? ?? 'Medium').toLowerCase(),
-      );
+      final wordText = (widget.wordData['word'] ?? '').toString();
+      final sentenceText = (widget.wordData['exampleSentence'] ?? '').toString();
+      final translationText = (widget.wordData['exampleTranslation'] ?? '').toString();
 
-      if (word != null && withSentence) {
-        await userDateService.addSentenceToWord(
-          wordId: word.id,
-          sentence: widget.wordData['exampleSentence'],
-          translation: widget.wordData['exampleTranslation'],
-          difficulty: 'medium',
+      Word? word = appState.findWordByEnglish(wordText);
+
+      if (!wordAdded) {
+        word = await appState.addWord(
+          english: wordText,
+          turkish: "⭐ ${widget.wordData['translation']}",
+          addedDate: addedDate,
+          difficulty: (widget.wordData['difficulty'] as String? ?? 'Medium').toLowerCase(),
+          source: 'daily_word',
         );
       }
 
-      if (mounted) {
-        setState(() {
-          _isAdding = false;
-          _added = true;
-        });
+      if (withSentence && word != null && !sentenceAdded) {
+        await appState.addSentenceToWord(
+          wordId: word.id,
+          sentence: sentenceText,
+          translation: translationText,
+          difficulty: 'medium',
+        );
       }
-    } catch (e) {
+    } finally {
       if (mounted) {
         setState(() => _isAdding = false);
       }
@@ -727,6 +746,13 @@ class _WordOfTheDayModalState extends State<WordOfTheDayModal> with TickerProvid
 
   // --- Step 6 ---
   Widget _buildStep6_Summary() {
+    final appState = context.watch<AppStateProvider>();
+    final wordText = (widget.wordData['word'] ?? '').toString();
+    final sentenceText = (widget.wordData['exampleSentence'] ?? '').toString();
+    final existingWord = appState.findWordByEnglish(wordText);
+    final wordAdded = existingWord != null;
+    final sentenceAdded = wordAdded && appState.hasSentenceForWord(existingWord!, sentenceText);
+
     return Padding(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -746,54 +772,86 @@ class _WordOfTheDayModalState extends State<WordOfTheDayModal> with TickerProvid
           ),
           const SizedBox(height: 48),
 
-          if (!_added) ...[
-             // "Kelimeyi Cümlesiyle Ekle" Button
-             SizedBox(
-               width: double.infinity,
-               child: ElevatedButton.icon(
-                 onPressed: () => _addToWords(withSentence: true),
-                 icon: const Icon(Icons.playlist_add, color: Colors.white),
-                 label: const Text('Kelimeyi Cümlesiyle Ekle', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                 style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF10B981), // Emerald-500
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    elevation: 0,
-                 ),
-               ),
-             ),
-             const SizedBox(height: 12),
-             // "Sadece Kelimeyi Ekle" Button
-             SizedBox(
-               width: double.infinity,
-               child: OutlinedButton.icon(
-                 onPressed: () => _addToWords(withSentence: false),
-                 icon: const Icon(Icons.add, color: Colors.white70),
-                 label: const Text('Sadece Kelimeyi Ekle', style: TextStyle(color: Colors.white)),
-                 style: OutlinedButton.styleFrom(
-                    side: BorderSide(color: Colors.white.withOpacity(0.3)),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                 ),
-               ),
-             ),
+          if (!wordAdded) ...[
+            // "Kelimeyi Cümlesiyle Ekle" Button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isAdding ? null : () => _addToWords(withSentence: true, wordAdded: wordAdded, sentenceAdded: sentenceAdded),
+                icon: const Icon(Icons.playlist_add, color: Colors.white),
+                label: const Text('Kelimeyi Cümlesiyle Ekle', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981), // Emerald-500
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  elevation: 0,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            // "Sadece Kelimeyi Ekle" Button
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _isAdding ? null : () => _addToWords(withSentence: false, wordAdded: wordAdded, sentenceAdded: sentenceAdded),
+                icon: const Icon(Icons.add, color: Colors.white70),
+                label: const Text('Sadece Kelimeyi Ekle', style: TextStyle(color: Colors.white)),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: Colors.white.withOpacity(0.3)),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+            ),
+          ] else if (wordAdded && !sentenceAdded) ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF10B981).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFF10B981).withOpacity(0.3)),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.check_circle, color: Color(0xFF10B981)),
+                  SizedBox(width: 8),
+                  Text('Kelime ekli', style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isAdding ? null : () => _addToWords(withSentence: true, wordAdded: wordAdded, sentenceAdded: sentenceAdded),
+                icon: const Icon(Icons.playlist_add, color: Colors.white),
+                label: const Text('Cümlesini de ekle', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  elevation: 0,
+                ),
+              ),
+            ),
           ] else
-             Container(
-               padding: const EdgeInsets.all(16),
-               decoration: BoxDecoration(
-                 color: const Color(0xFF10B981).withOpacity(0.1),
-                 borderRadius: BorderRadius.circular(16),
-                 border: Border.all(color: const Color(0xFF10B981).withOpacity(0.3)),
-               ),
-               child: Row(
-                 mainAxisAlignment: MainAxisAlignment.center,
-                 children: const [
-                   Icon(Icons.check_circle, color: Color(0xFF10B981)), 
-                   SizedBox(width: 8),
-                   Text('Listenize Kaydedildi!', style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold)),
-                 ],
-               ),
-             )
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF10B981).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFF10B981).withOpacity(0.3)),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.check_circle, color: Color(0xFF10B981)),
+                  SizedBox(width: 8),
+                  Text('Kelime ve cümle ekli', style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold)),
+                ],
+              ),
+            )
         ],
       ),
     );

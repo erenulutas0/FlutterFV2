@@ -3,6 +3,7 @@ package com.ingilizce.calismaapp.controller;
 import com.ingilizce.calismaapp.entity.UserActivity;
 import com.ingilizce.calismaapp.service.FeedService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -11,29 +12,17 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
+@ConditionalOnProperty(name = "app.features.community.enabled", havingValue = "true", matchIfMissing = false)
 @RequestMapping("/api/feed")
 public class FeedController {
 
     @Autowired
     private FeedService feedService;
 
-    // Helper for userId extraction
-    private Long getUserId(String userIdHeader) {
-        if (userIdHeader != null) {
-            try {
-                return Long.parseLong(userIdHeader);
-            } catch (Exception e) {
-            }
-        }
-        return 1L;
-    }
-
     @GetMapping
     public ResponseEntity<List<Map<String, Object>>> getFeed(
             @RequestParam(defaultValue = "20") int limit,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         List<UserActivity> activities = feedService.getFeed(userId, limit);
 
         // Convert to DTO/Map

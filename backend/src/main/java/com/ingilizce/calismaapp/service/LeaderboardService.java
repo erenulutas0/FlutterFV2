@@ -17,7 +17,7 @@ public class LeaderboardService {
     private static final String LEADERBOARD_KEY = "leaderboard:weekly";
 
     @Autowired
-    private RedisTemplate<String, String> redisTemplate; // Using String template for ZSET
+    private RedisTemplate<String, String> redisTemplate;
 
     // Increment user score (e.g., when learning a word)
     public void incrementScore(Long userId, double scoreDelta) {

@@ -3,9 +3,11 @@ C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\service\P
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\repository\UserProgressRepository.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\repository\WordReviewRepository.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\service\NotificationService.java
+C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\config\CorsProperties.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\controller\ApiController.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\controller\FeedController.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\entity\Post.java
+C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\service\ActivityPublisher.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\service\WordReviewService.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\entity\Message.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\service\GrammarCheckService.java
@@ -23,6 +25,7 @@ C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\controlle
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\model\Achievement.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\service\ChatbotService.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\entity\SubscriptionPlan.java
+C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\service\NoopActivityPublisher.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\repository\UserRepository.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\repository\PaymentTransactionRepository.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\repository\SentencePracticeRepository.java
@@ -35,6 +38,7 @@ C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\entity\Us
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\service\WordService.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\repository\UserActivityRepository.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\entity\UserAchievement.java
+C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\service\PromptCatalog.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\CalismaAppApplication.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\controller\UserController.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\service\MatchmakingService.java
@@ -51,12 +55,15 @@ C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\controlle
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\service\FriendshipService.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\controller\AdminController.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\dto\PracticeSentence.java
+C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\exception\ApiErrorResponse.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\repository\PostLikeRepository.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\controller\WordReviewController.java
+C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\exception\GlobalExceptionHandler.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\entity\Word.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\entity\Friendship.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\config\CorsConfig.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\entity\PostLike.java
+C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\service\FeedActivityPublisher.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\repository\CommentRepository.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\controller\SocialController.java
 C:\flutter-project-main\backend\src\main\java\com\ingilizce\calismaapp\util\SSLUtils.java

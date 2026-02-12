@@ -31,10 +31,12 @@ import 'notifications_page.dart';
 
 class HomePage extends StatefulWidget {
   final Function(String) onNavigate;
+  final bool enableBackgroundTasks;
 
   const HomePage({
     Key? key,
     required this.onNavigate,
+    this.enableBackgroundTasks = true,
   }) : super(key: key);
 
   @override
@@ -65,9 +67,11 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
   @override
   void initState() {
     super.initState();
-    _handleLostData();
-    _loadOnlineUsers();
-    _startHeartbeat();
+    if (widget.enableBackgroundTasks) {
+      _handleLostData();
+      _loadOnlineUsers();
+      _startHeartbeat();
+    }
 
     // Glow animations
     _glowAnimation1 = AnimationController(
@@ -225,7 +229,10 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
         return Scaffold(
           body: Stack(
             children: [
-              const AnimatedBackground(isDark: true),
+              AnimatedBackground(
+                isDark: true,
+                enableAnimations: widget.enableBackgroundTasks,
+              ),
               SafeArea(
                 child: RefreshIndicator(
                   onRefresh: _refreshData,
@@ -2377,6 +2384,11 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
             children: dailyWords.asMap().entries.map((entry) {
               final index = entry.key;
               final word = entry.value;
+              final appState = context.read<AppStateProvider>();
+              final existingWord = appState.findWordByEnglish((word['word'] ?? '').toString());
+              final wordAdded = existingWord != null;
+              final sentenceAdded = wordAdded &&
+                  appState.hasSentenceForWord(existingWord!, (word['exampleSentence'] ?? '').toString());
               return DailyWordCard(
                 wordData: word,
                 index: index,
@@ -2389,7 +2401,12 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
                     ),
                   );
                 },
-                onQuickAdd: () => _showQuickAddOptions(word),
+                isWordAdded: wordAdded,
+                isSentenceAdded: sentenceAdded,
+                onQuickAdd: wordAdded ? null : () => _showQuickAddOptions(word, wordAdded: wordAdded, sentenceAdded: sentenceAdded),
+                onAddSentence: (!wordAdded || sentenceAdded)
+                    ? null
+                    : () => _addWordToLibrary(word, withSentence: true),
               );
             }).toList(),
           ),
@@ -2398,12 +2415,43 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
     );
   }
 
-  void _showQuickAddOptions(Map<String, dynamic> wordData) {
+  void _showQuickAddOptions(Map<String, dynamic> wordData, {required bool wordAdded, required bool sentenceAdded}) {
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E293B),
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) {
+        if (wordAdded && sentenceAdded) {
+          return Container(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  wordData['word'] ?? '',
+                  style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFF10B981).withOpacity(0.4)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.check_circle, color: Color(0xFF10B981)),
+                      SizedBox(width: 8),
+                      Text('Kelime ve cümle zaten eklendi', style: TextStyle(color: Color(0xFF10B981))),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
         return Container(
           padding: const EdgeInsets.all(24),
           child: Column(
@@ -2421,36 +2469,52 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
               ),
               const SizedBox(height: 24),
               
-              // Add Only Word
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: Colors.blue.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                  child: const Icon(Icons.add, color: Colors.blue),
+              if (wordAdded && !sentenceAdded) ...[
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
+                    child: const Icon(Icons.playlist_add, color: Colors.green),
+                  ),
+                  title: const Text('Cümlesini Ekle', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  subtitle: const Text('Kelime zaten ekli, sadece cümle eklenecek', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _addWordToLibrary(wordData, withSentence: true);
+                  },
                 ),
-                title: const Text('Sadece Kelimeyi Ekle', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                subtitle: const Text('Kelime listesine eklenir', style: TextStyle(color: Colors.white54, fontSize: 12)),
-                onTap: () {
-                  Navigator.pop(context);
-                  _addWordToLibrary(wordData, withSentence: false);
-                },
-              ),
-              const SizedBox(height: 12),
-              
-              // Add With Sentence
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                  child: const Icon(Icons.playlist_add, color: Colors.green),
+              ] else ...[
+                // Add Only Word
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(color: Colors.blue.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
+                    child: const Icon(Icons.add, color: Colors.blue),
+                  ),
+                  title: const Text('Sadece Kelimeyi Ekle', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  subtitle: const Text('Kelime listesine eklenir', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _addWordToLibrary(wordData, withSentence: false);
+                  },
                 ),
-                title: const Text('Kelimeyi Cümlesiyle Ekle', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                subtitle: const Text('Hem kelime hem de örnek cümle eklenir', style: TextStyle(color: Colors.white54, fontSize: 12)),
-                onTap: () {
-                  Navigator.pop(context);
-                  _addWordToLibrary(wordData, withSentence: true);
-                },
-              ),
+                const SizedBox(height: 12),
+                
+                // Add With Sentence
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
+                    child: const Icon(Icons.playlist_add, color: Colors.green),
+                  ),
+                  title: const Text('Kelimeyi Cümlesiyle Ekle', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  subtitle: const Text('Hem kelime hem de örnek cümle eklenir', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _addWordToLibrary(wordData, withSentence: true);
+                  },
+                ),
+              ],
             ],
           ),
         );
@@ -2462,28 +2526,48 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
     try {
       final appState = context.read<AppStateProvider>();
       final addedDate = DateTime.now();
+      final wordText = (wordData['word'] ?? '').toString();
+      final sentenceText = (wordData['exampleSentence'] ?? '').toString();
+      final translationText = (wordData['exampleTranslation'] ?? '').toString();
+      final existingWord = appState.findWordByEnglish(wordText);
+      final wordAlreadyAdded = existingWord != null;
+      final sentenceAlreadyAdded = wordAlreadyAdded &&
+          appState.hasSentenceForWord(existingWord!, sentenceText);
       
-      // AppStateProvider üzerinden kelime ekle - otomatik XP ve stats güncellenir
-      // source: 'daily_word' ile Günün Kelimesi XP'si verilir (+15 XP)
-      final word = await appState.addWord(
-        english: wordData['word'],
-        turkish: "⭐ ${wordData['translation']}",
-        addedDate: addedDate,
-        difficulty: (wordData['difficulty'] as String? ?? 'Medium').toLowerCase(),
-        source: 'daily_word', // Günün Kelimesi XP türü
-      );
+      Word? word = existingWord;
+      if (!wordAlreadyAdded) {
+        // AppStateProvider üzerinden kelime ekle - otomatik XP ve stats güncellenir
+        // source: 'daily_word' ile Günün Kelimesi XP'si verilir (+10 XP)
+        word = await appState.addWord(
+          english: wordText,
+          turkish: "⭐ ${wordData['translation']}",
+          addedDate: addedDate,
+          difficulty: (wordData['difficulty'] as String? ?? 'Medium').toLowerCase(),
+          source: 'daily_word', // Günün Kelimesi XP türü
+        );
+      }
 
-      if (word != null && withSentence) {
+      if (withSentence && word != null && !sentenceAlreadyAdded) {
         // AppStateProvider üzerinden cümle ekle - otomatik XP güncellenir (+5 XP)
         await appState.addSentenceToWord(
           wordId: word.id,
-          sentence: wordData['exampleSentence'],
-          translation: wordData['exampleTranslation'],
+          sentence: sentenceText,
+          translation: translationText,
           difficulty: 'medium',
         );
       }
 
       if (mounted) {
+        String message;
+        if (wordAlreadyAdded && sentenceAlreadyAdded) {
+          message = 'Kelime ve cümle zaten eklendi.';
+        } else if (wordAlreadyAdded && withSentence) {
+          message = 'Kelime ekli, cümle eklendi! +5 XP';
+        } else if (wordAlreadyAdded) {
+          message = 'Kelime zaten ekli.';
+        } else {
+          message = withSentence ? 'Kelime ve cümle eklendi! +15 XP' : 'Kelime eklendi! +10 XP';
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
@@ -2492,9 +2576,7 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    withSentence 
-                        ? 'Kelime ve cümle eklendi! +20 XP' 
-                        : 'Kelime eklendi! +15 XP',
+                    message,
                   ),
                 ),
               ],

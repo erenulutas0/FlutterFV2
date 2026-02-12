@@ -211,7 +211,7 @@ class XPActions {
     id: 'daily_word',
     name: 'Günün Kelimesi',
     description: 'Günün kelimesi öğrenildi',
-    xpAmount: 15,
+    xpAmount: 10,
     category: 'daily',
   );
   

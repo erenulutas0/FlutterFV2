@@ -3,6 +3,8 @@ package com.ingilizce.calismaapp.service;
 import com.ingilizce.calismaapp.entity.SentencePractice;
 import com.ingilizce.calismaapp.repository.SentencePracticeRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -20,20 +22,19 @@ public class SentencePracticeService {
         return sentencePracticeRepository.findByUserIdOrderByCreatedDateDesc(userId);
     }
 
+    public Page<SentencePractice> getPracticeSentencesPage(Long userId, int page, int size) {
+        return sentencePracticeRepository.findByUserIdOrderByCreatedDateDesc(userId, PageRequest.of(page, size));
+    }
+
     // Get sentence by ID and User
     public Optional<SentencePractice> getSentenceByIdAndUser(Long id, Long userId) {
-        Optional<SentencePractice> sentence = sentencePracticeRepository.findById(id);
-        if (sentence.isPresent() && sentence.get().getUserId().equals(userId)) {
-            return sentence;
-        }
-        return Optional.empty();
+        return sentencePracticeRepository.findByIdAndUserId(id, userId);
     }
 
     // Save a new sentence
     public SentencePractice saveSentence(SentencePractice sentencePractice) {
-        // Ensure userId is set
         if (sentencePractice.getUserId() == null) {
-            sentencePractice.setUserId(1L);
+            throw new IllegalArgumentException("sentencePractice.userId is required");
         }
         return sentencePracticeRepository.save(sentencePractice);
     }
@@ -83,9 +84,7 @@ public class SentencePracticeService {
 
     // Get statistics
     public long getTotalSentenceCount(Long userId) {
-        // Currently generic count, should implement countByUserId if needed
-        // For now, estimating or adding countByUserId to repo
-        return getAllSentences(userId).size();
+        return sentencePracticeRepository.countByUserId(userId);
     }
 
     public long getSentenceCountByDifficulty(Long userId, SentencePractice.DifficultyLevel difficulty) {

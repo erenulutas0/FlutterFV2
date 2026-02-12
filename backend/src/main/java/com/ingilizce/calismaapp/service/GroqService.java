@@ -8,13 +8,21 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class GroqService {
@@ -32,58 +40,104 @@ public class GroqService {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final AtomicInteger consecutiveFailures = new AtomicInteger(0);
+    private volatile long circuitOpenUntilMs = 0L;
 
-    public GroqService() {
+    @Value("${groq.resilience.max-attempts:3}")
+    private int maxAttempts;
+
+    @Value("${groq.resilience.initial-backoff-ms:250}")
+    private long initialBackoffMs;
+
+    @Value("${groq.resilience.max-backoff-ms:2000}")
+    private long maxBackoffMs;
+
+    @Value("${groq.resilience.call-timeout-budget-ms:35000}")
+    private long callTimeoutBudgetMs;
+
+    @Value("${groq.resilience.failure-threshold:5}")
+    private int failureThreshold;
+
+    @Value("${groq.resilience.open-duration-ms:30000}")
+    private long openDurationMs;
+
+    public GroqService(@Value("${app.security.allow-insecure-ssl:false}") boolean allowInsecureSsl) {
         this.objectMapper = new ObjectMapper();
-        this.restTemplate = createInsecureRestTemplate();
-        logger.info("GroqService initialized with SSL-bypassing RestTemplate");
+        this.restTemplate = createRestTemplate(allowInsecureSsl);
+        if (allowInsecureSsl) {
+            logger.warn("GroqService initialized with INSECURE SSL mode (local-dev only)");
+        } else {
+            logger.info("GroqService initialized with strict SSL verification");
+        }
     }
 
-    private RestTemplate createInsecureRestTemplate() {
+    protected RestTemplate createRestTemplate(boolean allowInsecureSsl) {
+        if (!allowInsecureSsl) {
+            return createSecureRestTemplate();
+        }
+
         try {
-            // Trust all certificates
-            javax.net.ssl.TrustManager[] trustAllCerts = new javax.net.ssl.TrustManager[] {
-                    new javax.net.ssl.X509TrustManager() {
-                        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
-                            return null;
-                        }
-
-                        public void checkClientTrusted(
-                                java.security.cert.X509Certificate[] certs, String authType) {
-                        }
-
-                        public void checkServerTrusted(
-                                java.security.cert.X509Certificate[] certs, String authType) {
-                        }
-                    }
-            };
-
-            // Install the all-trusting trust manager
-            javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
-            sc.init(null, trustAllCerts, new java.security.SecureRandom());
-
-            org.springframework.http.client.SimpleClientHttpRequestFactory factory = new org.springframework.http.client.SimpleClientHttpRequestFactory() {
-                @Override
-                protected java.net.HttpURLConnection openConnection(java.net.URL url, java.net.Proxy proxy)
-                        throws java.io.IOException {
-                    java.net.HttpURLConnection connection = super.openConnection(url, proxy);
-                    if (connection instanceof javax.net.ssl.HttpsURLConnection) {
-                        ((javax.net.ssl.HttpsURLConnection) connection).setSSLSocketFactory(sc.getSocketFactory());
-                        ((javax.net.ssl.HttpsURLConnection) connection)
-                                .setHostnameVerifier((hostname, session) -> true);
-                    }
-                    return connection;
-                }
-            };
-
-            factory.setConnectTimeout(60000); // 60 seconds
-            factory.setReadTimeout(60000); // 60 seconds
-
+            TrustManager[] trustAllCerts = createTrustAllManagers();
+            SSLContext sslContext = createSslContext("TLS");
+            initializeSslContext(sslContext, trustAllCerts);
+            SimpleClientHttpRequestFactory factory = createInsecureRequestFactory(sslContext);
             return new RestTemplate(factory);
         } catch (Exception e) {
-            logger.error("Failed to create SSL bypassing RestTemplate", e);
-            return new RestTemplate();
+            logger.error("Failed to create insecure RestTemplate, falling back to strict SSL", e);
+            return createSecureRestTemplate();
         }
+    }
+
+    protected RestTemplate createSecureRestTemplate() {
+        SimpleClientHttpRequestFactory secureFactory = new SimpleClientHttpRequestFactory();
+        secureFactory.setConnectTimeout(60000);
+        secureFactory.setReadTimeout(60000);
+        return new RestTemplate(secureFactory);
+    }
+
+    protected TrustManager[] createTrustAllManagers() {
+        return new TrustManager[] {
+                new X509TrustManager() {
+                    @Override
+                    public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                        return null;
+                    }
+
+                    @Override
+                    public void checkClientTrusted(java.security.cert.X509Certificate[] certs, String authType) {
+                    }
+
+                    @Override
+                    public void checkServerTrusted(java.security.cert.X509Certificate[] certs, String authType) {
+                    }
+                }
+        };
+    }
+
+    protected SSLContext createSslContext(String protocol) throws Exception {
+        return SSLContext.getInstance(protocol);
+    }
+
+    protected void initializeSslContext(SSLContext sslContext, TrustManager[] trustManagers) throws Exception {
+        sslContext.init(null, trustManagers, new java.security.SecureRandom());
+    }
+
+    protected SimpleClientHttpRequestFactory createInsecureRequestFactory(SSLContext sslContext) {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory() {
+            @Override
+            protected java.net.HttpURLConnection openConnection(java.net.URL url, java.net.Proxy proxy)
+                    throws java.io.IOException {
+                java.net.HttpURLConnection connection = super.openConnection(url, proxy);
+                if (connection instanceof javax.net.ssl.HttpsURLConnection) {
+                    ((javax.net.ssl.HttpsURLConnection) connection).setSSLSocketFactory(sslContext.getSocketFactory());
+                    ((javax.net.ssl.HttpsURLConnection) connection).setHostnameVerifier((hostname, session) -> true);
+                }
+                return connection;
+            }
+        };
+        factory.setConnectTimeout(60000);
+        factory.setReadTimeout(60000);
+        return factory;
     }
 
     /**
@@ -97,6 +151,48 @@ public class GroqService {
         logger.info("Groq Request - Model: {}, URL: {}, Key present: {}", model, apiUrl,
                 (apiKey != null && !apiKey.isEmpty()));
 
+        if (isCircuitOpen()) {
+            throw new RuntimeException("Groq API Error: circuit is open");
+        }
+
+        long deadlineMs = System.currentTimeMillis() + Math.max(1L, callTimeoutBudgetMs);
+        int attempts = Math.max(1, maxAttempts);
+        long baseBackoffMs = Math.max(0L, initialBackoffMs);
+        long backoffCapMs = Math.max(baseBackoffMs, maxBackoffMs);
+        RuntimeException lastRetryableFailure = null;
+
+        for (int attempt = 1; attempt <= attempts; attempt++) {
+            try {
+                String content = executeChatCompletion(messages, jsonResponse);
+                recordSuccess();
+                return content;
+            } catch (NonRetryableGroqException e) {
+                recordFailure();
+                throw e;
+            } catch (RetryableGroqException e) {
+                lastRetryableFailure = e;
+                if (attempt == attempts) {
+                    break;
+                }
+
+                long backoffMs = computeBackoffMs(attempt, baseBackoffMs, backoffCapMs);
+                if ((System.currentTimeMillis() + backoffMs) >= deadlineMs) {
+                    break;
+                }
+
+                logger.warn("Groq transient failure (attempt {}/{}). Retrying in {} ms", attempt, attempts, backoffMs);
+                sleepQuietly(backoffMs);
+            }
+        }
+
+        recordFailure();
+        if (lastRetryableFailure != null) {
+            throw lastRetryableFailure;
+        }
+        throw new RuntimeException("Groq API Error: retry budget exhausted");
+    }
+
+    private String executeChatCompletion(List<Map<String, String>> messages, boolean jsonResponse) {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -130,14 +226,69 @@ public class GroqService {
                     return (String) message.get("content");
                 }
             }
-        } catch (org.springframework.web.client.HttpClientErrorException
-                | org.springframework.web.client.HttpServerErrorException e) {
-            logger.error("Groq API Error: Status={}, Body={}", e.getStatusCode(), e.getResponseBodyAsString());
-            throw new RuntimeException("Groq API Error: " + e.getResponseBodyAsString());
+        } catch (HttpClientErrorException e) {
+            logger.error("Groq API client error: Status={}, Body={}", e.getStatusCode(), e.getResponseBodyAsString());
+            throw new NonRetryableGroqException("Groq API Error: " + e.getResponseBodyAsString(), e);
+        } catch (HttpServerErrorException e) {
+            logger.error("Groq API server error: Status={}, Body={}", e.getStatusCode(), e.getResponseBodyAsString());
+            throw new RetryableGroqException("Groq API Error: " + e.getResponseBodyAsString(), e);
+        } catch (ResourceAccessException e) {
+            logger.error("Groq API transient access error", e);
+            throw new RetryableGroqException("Failed to communicate with AI service: " + e.getMessage(), e);
         } catch (Exception e) {
             logger.error("Error calling Groq API", e);
-            throw new RuntimeException("Failed to communicate with AI service: " + e.getMessage());
+            throw new RetryableGroqException("Failed to communicate with AI service: " + e.getMessage(), e);
         }
         return null;
+    }
+
+    private long computeBackoffMs(int attempt, long baseBackoffMs, long backoffCapMs) {
+        if (baseBackoffMs <= 0L) {
+            return 0L;
+        }
+        long backoff = baseBackoffMs * (1L << Math.max(0, attempt - 1));
+        return Math.min(backoff, backoffCapMs);
+    }
+
+    private boolean isCircuitOpen() {
+        return System.currentTimeMillis() < circuitOpenUntilMs;
+    }
+
+    private void recordSuccess() {
+        consecutiveFailures.set(0);
+        circuitOpenUntilMs = 0L;
+    }
+
+    private void recordFailure() {
+        int failures = consecutiveFailures.incrementAndGet();
+        if (failures >= Math.max(1, failureThreshold)) {
+            circuitOpenUntilMs = System.currentTimeMillis() + Math.max(1000L, openDurationMs);
+            logger.warn("Groq circuit opened for {} ms after {} consecutive failures",
+                    Math.max(1000L, openDurationMs), failures);
+            consecutiveFailures.set(0);
+        }
+    }
+
+    protected void sleepQuietly(long ms) {
+        if (ms <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static class RetryableGroqException extends RuntimeException {
+        RetryableGroqException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    private static class NonRetryableGroqException extends RuntimeException {
+        NonRetryableGroqException(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 }

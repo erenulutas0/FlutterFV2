@@ -7,15 +7,20 @@ import com.ingilizce.calismaapp.service.ChatbotService;
 import com.ingilizce.calismaapp.service.WordService;
 import com.ingilizce.calismaapp.service.GrammarCheckService;
 import com.ingilizce.calismaapp.entity.Word;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -23,6 +28,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/chatbot")
 public class ChatbotController {
+    private static final Logger log = LoggerFactory.getLogger(ChatbotController.class);
 
     @Autowired
     private ChatbotService chatbotService;
@@ -39,11 +45,17 @@ public class ChatbotController {
     @Autowired(required = false)
     private GrammarCheckService grammarCheckService;
 
+    @Autowired(required = false)
+    private MeterRegistry meterRegistry;
+
     @Value("${cache.sentences.ttl:604800}") // Default: 7 days
     private long cacheTtlSeconds;
 
     private final ObjectMapper objectMapper;
     private static final String CACHE_KEY_PREFIX = "sentences:";
+    private static final String CACHE_LOOKUP_TOTAL_METRIC = "chatbot.sentences.cache.lookup.total";
+    private static final String CACHE_LOOKUP_LATENCY_METRIC = "chatbot.sentences.cache.lookup.latency";
+    private static final String CACHE_WRITE_TOTAL_METRIC = "chatbot.sentences.cache.write.total";
 
     public ChatbotController() {
         this.objectMapper = new ObjectMapper();
@@ -61,38 +73,7 @@ public class ChatbotController {
     // validated the token
     // and set the ID in a Request Attribute or ThreadLocal.
 
-    // TODO: Integrate proper Spring Security Principal.
-    // For now, to stop trusting the client BLINDLY, we should validate the token.
-    // But since we are in a refactor, I will keep the header logic BUT Add a TODO
-    // warning
-    // as the User context logic is not fully present in this file.
-
-    // Actually, let's look at AuthController. Login returns userId.
-    // The frontend sends user ID.
-    // To be truly secure we need a JWT Filter.
-    // I will add a placeholder for JWT extraction.
-    // Fallback to safe default or implement JWT extraction.
-    // TEMPORARY: Reverting to Header purely because JWT Filter is not established
-    // yet.
-    // The previous analysis was correct but solving it requires a new
-    // SecurityConfig file.
-    // I will stick to the header for now but Mark it as DEPRECATED/INSECURE.
-    private Long getUserId(String userIdHeader) {
-        if (userIdHeader != null && !userIdHeader.isEmpty()) {
-            try {
-                return Long.parseLong(userIdHeader);
-            } catch (NumberFormatException e) {
-                return 1L;
-            }
-        }
-        return 1L;
-    }
-
     private boolean checkSubscription(Long userId) {
-        // Allow default admin/test user
-        if (userId == 1L)
-            return true;
-
         return userRepository.findById(userId)
                 .map(com.ingilizce.calismaapp.entity.User::isSubscriptionActive)
                 .orElse(false);
@@ -100,8 +81,7 @@ public class ChatbotController {
 
     @PostMapping("/generate-sentences")
     public ResponseEntity<Map<String, Object>> generateSentences(@RequestBody Map<String, Object> request,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         if (!checkSubscription(userId)) {
             return ResponseEntity.status(403).body(Map.of("error", "Subscription expired or not active."));
         }
@@ -125,8 +105,16 @@ public class ChatbotController {
         // Validate levels and lengths
         List<String> validLevels = java.util.Arrays.asList("A1", "A2", "B1", "B2", "C1", "C2");
         List<String> validLengths = java.util.Arrays.asList("short", "medium", "long");
-        levels = levels.stream().filter(validLevels::contains).collect(Collectors.toList());
-        lengths = lengths.stream().filter(validLengths::contains).collect(Collectors.toList());
+        levels = levels.stream()
+                .filter(validLevels::contains)
+                .distinct()
+                .sorted()
+                .collect(Collectors.toList());
+        lengths = lengths.stream()
+                .filter(validLengths::contains)
+                .distinct()
+                .sorted()
+                .collect(Collectors.toList());
 
         if (levels.isEmpty())
             levels = java.util.Arrays.asList("B1");
@@ -140,71 +128,80 @@ public class ChatbotController {
                 + String.join(",", lengths);
 
         try {
-            // ... (Existing Cache Logic kept same, assuming global cache is fine)
-            // ... (Existing LLM Logic)
-            StringBuilder levelLengthInfo = new StringBuilder();
-            levelLengthInfo.append("Generate 5 diverse sentences total, covering these combinations:\n");
-            for (String level : levels) {
-                for (String length : lengths) {
-                    levelLengthInfo.append(String.format("- Level: %s, Length: %s\n", level, length));
+            List<PracticeSentence> allSentences;
+            boolean cached = false;
+
+            Optional<List<PracticeSentence>> cachedSentences = loadSentencesFromCache(cacheKey);
+            if (cachedSentences.isPresent()) {
+                allSentences = cachedSentences.get();
+                cached = true;
+            } else {
+                StringBuilder levelLengthInfo = new StringBuilder();
+                levelLengthInfo.append("Generate 5 diverse sentences total, covering these combinations:\n");
+                for (String level : levels) {
+                    for (String length : lengths) {
+                        levelLengthInfo.append(String.format("- Level: %s, Length: %s\n", level, length));
+                    }
                 }
-            }
-            levelLengthInfo.append(
-                    "Distribute the 5 sentences across these combinations. Make sentences diverse and cover different meanings if the word has multiple meanings.");
+                levelLengthInfo.append(
+                        "Distribute the 5 sentences across these combinations. Make sentences diverse and cover different meanings if the word has multiple meanings.");
 
-            String message = String.format("Target word: '%s'.\n%s", normalizedWord, levelLengthInfo.toString());
+                String message = String.format("Target word: '%s'.\n%s", normalizedWord, levelLengthInfo.toString());
 
-            String jsonResponse = chatbotService.generateSentences(message);
+                String jsonResponse = chatbotService.generateSentences(message);
 
-            // ... (Existing Parsing Logic)
-            jsonResponse = jsonResponse.trim();
-            jsonResponse = jsonResponse.replaceAll("```json", "").replaceAll("```", "").trim();
+                // ... (Existing Parsing Logic)
+                jsonResponse = jsonResponse.trim();
+                jsonResponse = jsonResponse.replaceAll("```json", "").replaceAll("```", "").trim();
 
-            int arrayStartIndex = jsonResponse.indexOf('[');
-            if (arrayStartIndex > 0) {
-                jsonResponse = jsonResponse.substring(arrayStartIndex);
-            }
-            int arrayEndIndex = jsonResponse.lastIndexOf(']');
-            if (arrayEndIndex > 0 && arrayEndIndex < jsonResponse.length() - 1) {
-                jsonResponse = jsonResponse.substring(0, arrayEndIndex + 1);
-            }
-            jsonResponse = jsonResponse.trim();
-            jsonResponse = jsonResponse.replaceAll("\"turkishTransliteration\"", "\"turkishTranslation\"");
-            jsonResponse = jsonResponse.replaceAll("\"turkish_translation\"", "\"turkishTranslation\"");
-            jsonResponse = jsonResponse.replaceAll("\"turkish\"", "\"turkishTranslation\"");
+                int arrayStartIndex = jsonResponse.indexOf('[');
+                if (arrayStartIndex > 0) {
+                    jsonResponse = jsonResponse.substring(arrayStartIndex);
+                }
+                int arrayEndIndex = jsonResponse.lastIndexOf(']');
+                if (arrayEndIndex > 0 && arrayEndIndex < jsonResponse.length() - 1) {
+                    jsonResponse = jsonResponse.substring(0, arrayEndIndex + 1);
+                }
+                jsonResponse = jsonResponse.trim();
+                jsonResponse = jsonResponse.replaceAll("\"turkishTransliteration\"", "\"turkishTranslation\"");
+                jsonResponse = jsonResponse.replaceAll("\"turkish_translation\"", "\"turkishTranslation\"");
+                jsonResponse = jsonResponse.replaceAll("\"turkish\"", "\"turkishTranslation\"");
 
-            List<PracticeSentence> allSentences = new ArrayList<>();
-            try {
-                Object parsed = objectMapper.readValue(jsonResponse, Object.class);
+                allSentences = new ArrayList<>();
+                try {
+                    Object parsed = objectMapper.readValue(jsonResponse, Object.class);
 
-                if (parsed instanceof List) {
-                    allSentences = objectMapper.readValue(
-                            jsonResponse,
-                            new TypeReference<List<PracticeSentence>>() {
-                            });
-                } else if (parsed instanceof Map) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> map = (Map<String, Object>) parsed;
-                    if (map.containsKey("sentences") && map.get("sentences") instanceof List) {
-                        allSentences = objectMapper.convertValue(
-                                map.get("sentences"),
+                    if (parsed instanceof List) {
+                        allSentences = objectMapper.readValue(
+                                jsonResponse,
                                 new TypeReference<List<PracticeSentence>>() {
                                 });
                     } else {
-                        try {
-                            PracticeSentence single = objectMapper.convertValue(parsed, PracticeSentence.class);
-                            allSentences.add(single);
-                        } catch (Exception ex) {
-                            throw new RuntimeException("Unexpected JSON format", ex);
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> map = (Map<String, Object>) parsed;
+                        if (map.containsKey("sentences") && map.get("sentences") instanceof List) {
+                            allSentences = objectMapper.convertValue(
+                                    map.get("sentences"),
+                                    new TypeReference<List<PracticeSentence>>() {
+                                    });
+                        } else {
+                            try {
+                                PracticeSentence single = objectMapper.convertValue(parsed, PracticeSentence.class);
+                                allSentences.add(single);
+                            } catch (Exception ex) {
+                                throw new RuntimeException("Unexpected JSON format", ex);
+                            }
                         }
                     }
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to parse LLM response: " + e.getMessage(), e);
                 }
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to parse LLM response: " + e.getMessage(), e);
-            }
 
-            if (allSentences.size() > 5) {
-                allSentences = allSentences.subList(0, 5);
+                if (allSentences.size() > 5) {
+                    allSentences = allSentences.subList(0, 5);
+                }
+
+                storeSentencesToCache(cacheKey, allSentences);
             }
 
             // ... (Existing Grammar Check)
@@ -222,21 +219,96 @@ public class ChatbotController {
             result.put("sentences", sentences);
             result.put("translations", translations);
             result.put("count", sentences.size());
-            result.put("cached", false);
+            result.put("cached", cached);
 
             return ResponseEntity.ok(result);
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Failed to generate sentences for userId={}, word={}", userId, request.get("word"), e);
             Map<String, Object> error = new HashMap<>();
             error.put("error", "Failed to generate sentences: " + e.getMessage());
             return ResponseEntity.internalServerError().body(error);
         }
     }
 
+    private Optional<List<PracticeSentence>> loadSentencesFromCache(String cacheKey) {
+        long startNs = System.nanoTime();
+        String outcome = "miss";
+        try {
+            if (redisTemplate == null) {
+                outcome = "disabled";
+                return Optional.empty();
+            }
+
+            ValueOperations<String, String> ops = redisTemplate.opsForValue();
+            if (ops == null) {
+                outcome = "disabled";
+                return Optional.empty();
+            }
+
+            String cachedJson = ops.get(cacheKey);
+            if (cachedJson == null || cachedJson.isBlank()) {
+                return Optional.empty();
+            }
+
+            List<PracticeSentence> cachedSentences = objectMapper.readValue(
+                    cachedJson,
+                    new TypeReference<List<PracticeSentence>>() {
+                    });
+            outcome = "hit";
+            return Optional.of(cachedSentences);
+        } catch (Exception e) {
+            outcome = "error";
+            return Optional.empty();
+        } finally {
+            recordCacheLookupMetric(outcome, System.nanoTime() - startNs);
+        }
+    }
+
+    private void storeSentencesToCache(String cacheKey, List<PracticeSentence> sentences) {
+        if (redisTemplate == null || sentences == null || sentences.isEmpty()) {
+            recordCacheWriteMetric("skipped");
+            return;
+        }
+
+        try {
+            ValueOperations<String, String> ops = redisTemplate.opsForValue();
+            if (ops == null) {
+                recordCacheWriteMetric("skipped");
+                return;
+            }
+
+            String serialized = objectMapper.writeValueAsString(sentences);
+            if (cacheTtlSeconds > 0) {
+                ops.set(cacheKey, serialized, Duration.ofSeconds(cacheTtlSeconds));
+            } else {
+                ops.set(cacheKey, serialized);
+            }
+            recordCacheWriteMetric("stored");
+        } catch (Exception ignored) {
+            // Cache failures must not affect user-facing sentence generation.
+            recordCacheWriteMetric("error");
+        }
+    }
+
+    private void recordCacheLookupMetric(String outcome, long latencyNanos) {
+        if (meterRegistry == null) {
+            return;
+        }
+        meterRegistry.counter(CACHE_LOOKUP_TOTAL_METRIC, "outcome", outcome).increment();
+        meterRegistry.timer(CACHE_LOOKUP_LATENCY_METRIC, "outcome", outcome)
+                .record(Math.max(0L, latencyNanos), TimeUnit.NANOSECONDS);
+    }
+
+    private void recordCacheWriteMetric(String outcome) {
+        if (meterRegistry == null) {
+            return;
+        }
+        meterRegistry.counter(CACHE_WRITE_TOTAL_METRIC, "outcome", outcome).increment();
+    }
+
     @PostMapping("/check-grammar")
     public ResponseEntity<Map<String, Object>> checkGrammar(@RequestBody Map<String, String> request,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         if (!checkSubscription(userId)) {
             return ResponseEntity.status(403).body(Map.of("error", "Subscription expired or not active."));
         }
@@ -257,8 +329,7 @@ public class ChatbotController {
 
     @PostMapping("/check-translation")
     public ResponseEntity<Map<String, Object>> checkTranslation(@RequestBody Map<String, String> request,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         if (!checkSubscription(userId)) {
             return ResponseEntity.status(403).body(Map.of("error", "Subscription expired or not active."));
         }
@@ -300,7 +371,7 @@ public class ChatbotController {
             }
             return ResponseEntity.ok(parseJsonResponse(response));
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Failed to check translation", e);
             return ResponseEntity.internalServerError()
                     .body(Map.of("error", "Failed to check translation: " + e.getMessage()));
         }
@@ -372,8 +443,7 @@ public class ChatbotController {
     @PostMapping("/save-to-today")
     @SuppressWarnings("unchecked")
     public ResponseEntity<Map<String, Object>> saveToToday(@RequestBody Map<String, Object> request,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         // Note: Saving words doesn't necessarily require active subscription, but
         // generating them did.
         // We act largely as a proxy here.
@@ -420,15 +490,14 @@ public class ChatbotController {
             result.put("message", "Kelime ve cümleler bugünkü tarihe başarıyla eklendi.");
             return ResponseEntity.ok(result);
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Failed to save word to today list for userId={}", userId, e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to save word: " + e.getMessage()));
         }
     }
 
     @PostMapping("/chat")
     public ResponseEntity<Map<String, Object>> chat(@RequestBody Map<String, String> request,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         if (!checkSubscription(userId)) {
             return ResponseEntity.status(403).body(Map.of("error", "Subscription expired or not active."));
         }
@@ -445,7 +514,7 @@ public class ChatbotController {
             result.put("timestamp", System.currentTimeMillis());
             return ResponseEntity.ok(result);
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Failed to get chatbot response for userId={}", userId, e);
             return ResponseEntity.internalServerError()
                     .body(Map.of("error", "Failed to get response: " + e.getMessage()));
         }
@@ -453,8 +522,7 @@ public class ChatbotController {
 
     @PostMapping("/speaking-test/generate-questions")
     public ResponseEntity<Map<String, Object>> generateSpeakingTestQuestions(@RequestBody Map<String, String> request,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         if (!checkSubscription(userId)) {
             return ResponseEntity.status(403).body(Map.of("error", "Subscription expired or not active."));
         }
@@ -478,7 +546,7 @@ public class ChatbotController {
             });
             return ResponseEntity.ok(result);
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Failed to generate speaking test questions for userId={}", userId, e);
             return ResponseEntity.internalServerError()
                     .body(Map.of("error", "Failed to generate questions: " + e.getMessage()));
         }
@@ -486,8 +554,7 @@ public class ChatbotController {
 
     @PostMapping("/speaking-test/evaluate")
     public ResponseEntity<Map<String, Object>> evaluateSpeakingTest(@RequestBody Map<String, String> request,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         if (!checkSubscription(userId)) {
             return ResponseEntity.status(403).body(Map.of("error", "Subscription expired or not active."));
         }
@@ -513,7 +580,7 @@ public class ChatbotController {
             });
             return ResponseEntity.ok(result);
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Failed to evaluate speaking test for userId={}", userId, e);
             return ResponseEntity.internalServerError()
                     .body(Map.of("error", "Failed to evaluate response: " + e.getMessage()));
         }

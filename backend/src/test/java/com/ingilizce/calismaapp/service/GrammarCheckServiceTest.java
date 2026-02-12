@@ -87,6 +87,37 @@ class GrammarCheckServiceTest {
     }
 
     @Test
+    void checkGrammar_ShouldReturnNoErrorResponse_WhenDisabled() {
+        grammarCheckService.setEnabled(false);
+
+        Map<String, Object> result = grammarCheckService.checkGrammar("Any sentence");
+
+        assertFalse((Boolean) result.get("hasErrors"));
+        assertEquals(0, result.get("errorCount"));
+        verifyNoInteractions(groqService);
+    }
+
+    @Test
+    void checkGrammar_ShouldReturnNoErrorResponse_WhenSentenceBlank() {
+        Map<String, Object> result = grammarCheckService.checkGrammar("   ");
+
+        assertFalse((Boolean) result.get("hasErrors"));
+        assertEquals(0, result.get("errorCount"));
+        verifyNoInteractions(groqService);
+    }
+
+    @Test
+    void checkGrammar_ShouldReturnNoErrorResponse_WhenGroqReturnsNull() {
+        when(groqService.chatCompletion(anyList(), eq(true))).thenReturn(null);
+
+        Map<String, Object> result = grammarCheckService.checkGrammar("Hello");
+
+        assertFalse((Boolean) result.get("hasErrors"));
+        assertEquals(0, result.get("errorCount"));
+        verify(groqService).chatCompletion(anyList(), eq(true));
+    }
+
+    @Test
     void checkMultipleSentences_ShouldAggregateErrors() {
         String errorJson = "{" +
                 "\"hasErrors\": true," +
@@ -103,5 +134,28 @@ class GrammarCheckServiceTest {
         Map<String, List<Map<String, Object>>> results = grammarCheckService.checkMultipleSentences(sentences);
 
         assertEquals(2, results.size());
+    }
+
+    @Test
+    void checkMultipleSentences_ShouldIgnoreNoErrorAndInvalidErrorShape() {
+        String noErrorJson = "{\"hasErrors\":false,\"errorCount\":0,\"errors\":[]}";
+        String invalidErrorsJson = "{\"hasErrors\":true,\"errorCount\":1,\"errors\":\"oops\"}";
+        when(groqService.chatCompletion(anyList(), eq(true)))
+                .thenReturn(noErrorJson)
+                .thenReturn(invalidErrorsJson);
+
+        List<String> sentences = List.of("S1", "S2");
+        Map<String, List<Map<String, Object>>> results = grammarCheckService.checkMultipleSentences(sentences);
+
+        assertTrue(results.isEmpty());
+    }
+
+    @Test
+    void isEnabled_ShouldReflectSetEnabledValue() {
+        grammarCheckService.setEnabled(true);
+        assertTrue(grammarCheckService.isEnabled());
+
+        grammarCheckService.setEnabled(false);
+        assertFalse(grammarCheckService.isEnabled());
     }
 }

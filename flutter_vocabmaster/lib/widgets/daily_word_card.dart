@@ -1,18 +1,25 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 
 class DailyWordCard extends StatefulWidget {
   final Map<String, dynamic> wordData;
   final VoidCallback onTap;
-  final VoidCallback onQuickAdd; // New callback
+  final VoidCallback? onQuickAdd;
+  final VoidCallback? onAddSentence;
+  final bool isWordAdded;
+  final bool isSentenceAdded;
   final int index;
 
   const DailyWordCard({
     Key? key,
     required this.wordData,
     required this.onTap,
-    required this.onQuickAdd, // Required
+    required this.isWordAdded,
+    required this.isSentenceAdded,
     required this.index,
+    this.onQuickAdd,
+    this.onAddSentence,
   }) : super(key: key);
 
   @override
@@ -23,6 +30,7 @@ class _DailyWordCardState extends State<DailyWordCard> with TickerProviderStateM
   late AnimationController _pulseController;
   late AnimationController _rotationController;
   late AnimationController _tapController;
+  Timer? _pulseStartTimer;
 
   @override
   void initState() {
@@ -34,7 +42,7 @@ class _DailyWordCardState extends State<DailyWordCard> with TickerProviderStateM
     );
     
     // Stagger start based on index
-    Future.delayed(Duration(milliseconds: 200 * widget.index), () {
+    _pulseStartTimer = Timer(Duration(milliseconds: 200 * widget.index), () {
       if (mounted) _pulseController.repeat(reverse: true);
     });
 
@@ -55,6 +63,7 @@ class _DailyWordCardState extends State<DailyWordCard> with TickerProviderStateM
 
   @override
   void dispose() {
+    _pulseStartTimer?.cancel();
     _pulseController.dispose();
     _rotationController.dispose();
     _tapController.dispose();
@@ -91,6 +100,7 @@ class _DailyWordCardState extends State<DailyWordCard> with TickerProviderStateM
     return AnimatedBuilder(
       animation: _tapController,
       builder: (context, child) {
+        final fullyAdded = widget.isWordAdded && widget.isSentenceAdded;
         return Transform.scale(
           scale: 1.0 - _tapController.value,
           child: GestureDetector(
@@ -105,8 +115,10 @@ class _DailyWordCardState extends State<DailyWordCard> with TickerProviderStateM
               height: 180,
               margin: const EdgeInsets.only(right: 12),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0x3306B6D4), Color(0x333B82F6)],
+                gradient: LinearGradient(
+                  colors: fullyAdded
+                      ? [const Color(0x2210B981), const Color(0x2214B8A6)]
+                      : const [Color(0x3306B6D4), Color(0x333B82F6)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -196,6 +208,51 @@ class _DailyWordCardState extends State<DailyWordCard> with TickerProviderStateM
                                 size: 16
                               ),
                             ),
+
+                            if (widget.isWordAdded && !widget.isSentenceAdded)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 6),
+                                child: GestureDetector(
+                                  onTap: widget.onAddSentence,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF10B981).withOpacity(0.2),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: const Color(0xFF10B981).withOpacity(0.5)),
+                                    ),
+                                    child: const Text(
+                                      'Cümlesini Ekle',
+                                      style: TextStyle(
+                                        color: Color(0xFF10B981),
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                            if (widget.isWordAdded && widget.isSentenceAdded)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 6),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF10B981).withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: const Color(0xFF10B981).withOpacity(0.4)),
+                                  ),
+                                  child: const Text(
+                                    'Kelime + Cümle Eklendi',
+                                    style: TextStyle(
+                                      color: Color(0xFF10B981),
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
                           ],
                         ),
                       ),
@@ -203,22 +260,23 @@ class _DailyWordCardState extends State<DailyWordCard> with TickerProviderStateM
                   ),
                   
                   // Quick Add Button
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: GestureDetector(
-                      onTap: widget.onQuickAdd, // Handle in parent to stop propagation if needed, but here structure is separate
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.1),
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white.withOpacity(0.2)),
+                  if (!widget.isWordAdded)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: GestureDetector(
+                        onTap: widget.onQuickAdd,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.1),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white.withOpacity(0.2)),
+                          ),
+                          child: const Icon(Icons.add, color: Colors.white, size: 16),
                         ),
-                        child: const Icon(Icons.add, color: Colors.white, size: 16),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),

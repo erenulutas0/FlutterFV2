@@ -40,7 +40,8 @@ public class User {
 
     public enum Role {
         USER,
-        ADMIN
+        ADMIN,
+        SYSTEM
     }
 
     public User() {

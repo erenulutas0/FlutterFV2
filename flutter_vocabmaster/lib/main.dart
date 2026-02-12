@@ -25,6 +25,7 @@ import 'screens/ai_bot_chat_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/splash_screen.dart';
 import 'screens/notifications_page.dart';
+import 'screens/xp_history_page.dart';
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'services/global_state.dart';
@@ -127,6 +128,11 @@ class _MainScreenState extends State<MainScreen> {
       case 'notifications':
         Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => const NotificationsPage()),
+        );
+        break;
+      case 'xp-history':
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const XpHistoryPage()),
         );
         break;
     }

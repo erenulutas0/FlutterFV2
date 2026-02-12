@@ -1,0 +1,72 @@
+name: Backend DB Readiness
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - "scripts/**"
+      - "docker-compose.yml"
+      - "docker-compose.smoke.yml"
+      - ".github/workflows/backend-db-readiness.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - "scripts/**"
+      - "docker-compose.yml"
+      - "docker-compose.smoke.yml"
+      - ".github/workflows/backend-db-readiness.yml"
+  workflow_dispatch:
+
+jobs:
+  db-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Docker Info
+        run: |
+          docker version
+          docker compose version
+
+      - name: Run DB Readiness
+        shell: pwsh
+        run: pwsh -File ./scripts/run-db-readiness.ps1 -FailOnSkip
+
+      - name: Run Smoke + DB Parity Gate
+        shell: pwsh
+        run: |
+          pwsh -File ./scripts/smoke-clean-db.ps1 `
+            -ProjectName ci-parity `
+            -BackendPort 28082 `
+            -BackendSocketPort 29092 `
+            -PostgresPort 25432 `
+            -RedisPort 26379 `
+            -KeepContainers
+
+      - name: Run Explicit DB Parity Check
+        shell: pwsh
+        run: pwsh -File ./scripts/check-db-parity.ps1 -ProjectName ci-parity
+
+      - name: Cleanup Parity Stack
+        if: always()
+        run: docker compose -p ci-parity -f docker-compose.yml -f docker-compose.smoke.yml down --volumes --remove-orphans
+
+      - name: Run Backend Test Suite
+        working-directory: backend
+        run: mvn -q clean test
+
+      - name: Enforce Core Coverage Gate
+        shell: pwsh
+        run: pwsh -File ./scripts/check-core-coverage.ps1 -Threshold 90

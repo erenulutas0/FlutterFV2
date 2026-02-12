@@ -12,6 +12,7 @@ import org.mockito.MockitoAnnotations;
 import java.math.BigDecimal;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.when;
 
@@ -42,5 +43,21 @@ public class IyzicoServiceTest {
         Map<String, Object> result = iyzicoService.initializePayment(user, plan, "http://callback");
         assertNotNull(result);
         assertNotNull(result.get("status"));
+    }
+
+    @Test
+    void initializePayment_ShouldReturnFailure_WhenBaseUrlLookupThrows() {
+        User user = new User("test@example.com", "pass");
+        user.setId(1L);
+
+        SubscriptionPlan plan = new SubscriptionPlan("PRO", new BigDecimal("100"), 30);
+        plan.setId(1L);
+
+        when(iyzicoConfig.getBaseUrl()).thenThrow(new RuntimeException("iyzico unavailable"));
+
+        Map<String, Object> result = iyzicoService.initializePayment(user, plan, "http://callback");
+
+        assertEquals("failure", result.get("status"));
+        assertEquals("iyzico unavailable", result.get("errorMessage"));
     }
 }

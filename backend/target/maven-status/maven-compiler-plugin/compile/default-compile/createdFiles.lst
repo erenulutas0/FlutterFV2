@@ -1,3 +1,4 @@
+com\ingilizce\calismaapp\service\FeedActivityPublisher.class
 com\ingilizce\calismaapp\service\SentencePracticeService.class
 com\ingilizce\calismaapp\repository\FriendshipRepository.class
 com\ingilizce\calismaapp\controller\ChatbotController$1.class
@@ -24,6 +25,8 @@ com\ingilizce\calismaapp\service\NotificationService.class
 com\ingilizce\calismaapp\util\SSLUtils$1.class
 com\ingilizce\calismaapp\controller\AdminController.class
 com\ingilizce\calismaapp\controller\ApiController.class
+com\ingilizce\calismaapp\exception\GlobalExceptionHandler.class
+com\ingilizce\calismaapp\service\NoopActivityPublisher.class
 com\ingilizce\calismaapp\dto\UserDto.class
 com\ingilizce\calismaapp\entity\Post.class
 com\ingilizce\calismaapp\controller\NotificationController.class
@@ -36,6 +39,7 @@ com\ingilizce\calismaapp\entity\Friendship$Status.class
 com\ingilizce\calismaapp\service\SRSService.class
 com\ingilizce\calismaapp\entity\PostLike.class
 com\ingilizce\calismaapp\controller\ChatbotController$3.class
+com\ingilizce\calismaapp\exception\ApiErrorResponse.class
 com\ingilizce\calismaapp\repository\UserActivityRepository.class
 com\ingilizce\calismaapp\service\WordReviewService.class
 com\ingilizce\calismaapp\service\ChatbotService.class
@@ -64,8 +68,10 @@ com\ingilizce\calismaapp\controller\LeaderboardController.class
 com\ingilizce\calismaapp\repository\NotificationRepository.class
 com\ingilizce\calismaapp\model\Achievement.class
 com\ingilizce\calismaapp\entity\PaymentTransaction$Status.class
+com\ingilizce\calismaapp\service\ActivityPublisher.class
 com\ingilizce\calismaapp\service\SocialService.class
 com\ingilizce\calismaapp\service\FeedService.class
+com\ingilizce\calismaapp\service\PromptCatalog.class
 com\ingilizce\calismaapp\service\UserService.class
 com\ingilizce\calismaapp\entity\UserAchievement.class
 com\ingilizce\calismaapp\entity\SentencePractice.class
@@ -76,16 +82,19 @@ com\ingilizce\calismaapp\service\GroqService$2.class
 com\ingilizce\calismaapp\entity\User.class
 com\ingilizce\calismaapp\config\RedisConfig.class
 com\ingilizce\calismaapp\entity\UserActivity.class
+com\ingilizce\calismaapp\service\PromptCatalog$PromptOutput.class
 com\ingilizce\calismaapp\repository\PostRepository.class
 com\ingilizce\calismaapp\controller\GrammarController.class
 com\ingilizce\calismaapp\controller\SocialController.class
 com\ingilizce\calismaapp\controller\ProgressController.class
+com\ingilizce\calismaapp\config\CorsProperties.class
 com\ingilizce\calismaapp\repository\SentenceRepository.class
 com\ingilizce\calismaapp\service\PiperTtsService.class
 com\ingilizce\calismaapp\entity\UserActivity$ActivityType.class
 com\ingilizce\calismaapp\entity\WordReview.class
 com\ingilizce\calismaapp\dto\PracticeSentence.class
 com\ingilizce\calismaapp\entity\Sentence.class
+com\ingilizce\calismaapp\service\PromptCatalog$PromptDef.class
 com\ingilizce\calismaapp\controller\UserController.class
 com\ingilizce\calismaapp\service\WordService.class
 com\ingilizce\calismaapp\repository\CommentRepository.class

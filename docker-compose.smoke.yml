@@ -1,0 +1,9 @@
+services:
+  backend:
+    environment:
+      GROQ_API_KEY: smoke-test-key
+      APP_SECURITY_ALLOW_INSECURE_SSL: "false"
+
+  frontend:
+    profiles:
+      - frontend

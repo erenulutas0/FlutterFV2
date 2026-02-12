@@ -2,6 +2,8 @@ package com.ingilizce.calismaapp.config;
 
 import com.ingilizce.calismaapp.entity.SubscriptionPlan;
 import com.ingilizce.calismaapp.repository.SubscriptionPlanRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -10,6 +12,7 @@ import java.math.BigDecimal;
 
 @Configuration
 public class DataLoader {
+    private static final Logger log = LoggerFactory.getLogger(DataLoader.class);
 
     @Bean
     CommandLineRunner initDatabase(SubscriptionPlanRepository repository) {
@@ -25,7 +28,7 @@ public class DataLoader {
                 annual.setFeatures("All PRO Features, 40% Discount, Priority Support");
                 repository.save(annual);
 
-                System.out.println("Default subscription plans seeded.");
+                log.info("Default subscription plans seeded.");
             }
         };
     }

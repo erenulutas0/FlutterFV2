@@ -73,4 +73,50 @@ class LeaderboardServiceTest {
         assertEquals("100", result.get(0).get("userId"));
         assertEquals(50.0, result.get(0).get("score"));
     }
+
+    @Test
+    void getTopUsers_ShouldReturnEmptyList_WhenRedisReturnsNull() {
+        when(zSetOperations.reverseRangeWithScores(eq("leaderboard:weekly"), eq(0L), eq(4L))).thenReturn(null);
+
+        List<Map<String, Object>> result = leaderboardService.getTopUsers(5);
+
+        assertNotNull(result);
+        assertEquals(0, result.size());
+    }
+
+    @Test
+    void getUserRank_ShouldReturnOneBasedRank_WhenPresent() {
+        when(zSetOperations.reverseRank("leaderboard:weekly", "77")).thenReturn(0L);
+
+        Long rank = leaderboardService.getUserRank(77L);
+
+        assertEquals(1L, rank);
+    }
+
+    @Test
+    void getUserRank_ShouldReturnMinusOne_WhenMissing() {
+        when(zSetOperations.reverseRank("leaderboard:weekly", "77")).thenReturn(null);
+
+        Long rank = leaderboardService.getUserRank(77L);
+
+        assertEquals(-1L, rank);
+    }
+
+    @Test
+    void getUserScore_ShouldReturnScore_WhenPresent() {
+        when(zSetOperations.score("leaderboard:weekly", "99")).thenReturn(42.5);
+
+        Double score = leaderboardService.getUserScore(99L);
+
+        assertEquals(42.5, score);
+    }
+
+    @Test
+    void getUserScore_ShouldReturnZero_WhenMissing() {
+        when(zSetOperations.score("leaderboard:weekly", "99")).thenReturn(null);
+
+        Double score = leaderboardService.getUserScore(99L);
+
+        assertEquals(0.0, score);
+    }
 }

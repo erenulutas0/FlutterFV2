@@ -5,6 +5,7 @@ import com.ingilizce.calismaapp.entity.User;
 import com.ingilizce.calismaapp.service.FriendshipService;
 import com.ingilizce.calismaapp.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,6 +15,7 @@ import java.util.HashMap;
 import java.util.stream.Collectors;
 
 @RestController
+@ConditionalOnProperty(name = "app.features.community.enabled", havingValue = "true", matchIfMissing = false)
 @RequestMapping("/api/friends")
 public class FriendshipController {
 
@@ -23,23 +25,10 @@ public class FriendshipController {
     @Autowired
     private UserRepository userRepository;
 
-    // Helper for temporary extraction (until Phase 4 Security)
-    private Long getUserId(String userIdHeader) {
-        if (userIdHeader != null) {
-            try {
-                return Long.parseLong(userIdHeader);
-            } catch (Exception e) {
-            }
-        }
-        return 1L;
-    }
-
     @PostMapping("/request")
     public ResponseEntity<Map<String, String>> sendRequest(
             @RequestBody Map<String, String> request,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         String friendEmail = request.get("email");
 
         try {
@@ -53,9 +42,7 @@ public class FriendshipController {
     @PostMapping("/accept/{requestId}")
     public ResponseEntity<Map<String, String>> acceptRequest(
             @PathVariable Long requestId,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         try {
             friendshipService.acceptRequest(requestId, userId);
             return ResponseEntity.ok(Map.of("message", "Arkadaşlık kabul edildi!"));
@@ -67,9 +54,7 @@ public class FriendshipController {
     @DeleteMapping("/remove/{friendId}")
     public ResponseEntity<Map<String, String>> removeFriend(
             @PathVariable Long friendId,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         try {
             friendshipService.removeFriend(userId, friendId);
             return ResponseEntity.ok(Map.of("message", "Arkadaşlıktan çıkarıldı."));
@@ -81,17 +66,14 @@ public class FriendshipController {
     @GetMapping("/status/{otherUserId}")
     public ResponseEntity<Map<String, Object>> getFriendshipStatus(
             @PathVariable Long otherUserId,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         String status = friendshipService.getFriendshipStatus(userId, otherUserId);
         return ResponseEntity.ok(Map.of("status", status, "isFriend", status.equals("ACCEPTED")));
     }
 
     @GetMapping("/list")
     public ResponseEntity<List<Map<String, Object>>> getFriends(
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         List<User> friends = friendshipService.getFriends(userId);
 
         // Return simple DTOs with online status
@@ -110,8 +92,7 @@ public class FriendshipController {
 
     @GetMapping("/requests")
     public ResponseEntity<List<Map<String, Object>>> getPendingRequests(
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        Long userId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long userId) {
         List<Friendship> requests = friendshipService.getPendingRequests(userId);
 
         List<Map<String, Object>> result = requests.stream().map(f -> {
@@ -132,9 +113,7 @@ public class FriendshipController {
     @GetMapping("/profile/{profileUserId}")
     public ResponseEntity<Map<String, Object>> getUserProfile(
             @PathVariable Long profileUserId,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-
-        Long currentUserId = getUserId(userIdHeader);
+            @RequestHeader("X-User-Id") Long currentUserId) {
 
         User profileUser = userRepository.findById(profileUserId).orElse(null);
         if (profileUser == null) {

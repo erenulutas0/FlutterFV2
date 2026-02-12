@@ -10,8 +10,8 @@ FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
 
-# Install fontconfig and freetype for potential font handling needs
-RUN apk add --no-cache fontconfig freetype
+# Install runtime tools and fonts
+RUN apk add --no-cache curl fontconfig freetype
 
 # Create non-root user for security
 RUN addgroup -S spring && adduser -S spring -G spring

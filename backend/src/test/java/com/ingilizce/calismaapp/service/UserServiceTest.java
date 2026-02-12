@@ -143,4 +143,14 @@ class UserServiceTest {
         assertTrue(testUser.getLastSeenAt().isAfter(LocalDateTime.now().minusMinutes(1)));
         verify(userRepository).save(testUser);
     }
+
+    @Test
+    void extendSubscription_ShouldReturnFalse_WhenUserNotFound() {
+        when(userRepository.findById(404L)).thenReturn(Optional.empty());
+
+        boolean extended = userService.extendSubscription(404L, 30);
+
+        assertFalse(extended);
+        verify(userRepository, never()).save(any(User.class));
+    }
 }

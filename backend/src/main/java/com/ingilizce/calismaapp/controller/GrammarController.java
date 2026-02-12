@@ -148,9 +148,10 @@ public class GrammarController {
             grammarCheckService.setEnabled(enabled);
         }
 
+        boolean currentEnabled = grammarCheckService.isEnabled();
         Map<String, Object> status = new HashMap<>();
-        status.put("enabled", grammarCheckService.isEnabled());
-        status.put("message", enabled ? "Grammar checking enabled" : "Grammar checking disabled");
+        status.put("enabled", currentEnabled);
+        status.put("message", currentEnabled ? "Grammar checking enabled" : "Grammar checking disabled");
         return ResponseEntity.ok(status);
     }
 }

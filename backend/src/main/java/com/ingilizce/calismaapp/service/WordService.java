@@ -6,12 +6,15 @@ import com.ingilizce.calismaapp.dto.CreateWordRequest;
 import com.ingilizce.calismaapp.repository.WordRepository;
 import com.ingilizce.calismaapp.repository.SentenceRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.Objects;
 
 @Service
 @Transactional
@@ -30,15 +33,14 @@ public class WordService {
     private ProgressService progressService;
 
     @Autowired
-    private FeedService feedService;
-
-    // Legacy method for backward compatibility (defaults to user 1)
-    public List<Word> getAllWords() {
-        return getAllWords(1L);
-    }
+    private ActivityPublisher activityPublisher;
 
     public List<Word> getAllWords(Long userId) {
         return wordRepository.findByUserId(userId);
+    }
+
+    public Page<Word> getWordsPage(Long userId, int page, int size) {
+        return wordRepository.findByUserId(userId, PageRequest.of(page, size));
     }
 
     public List<Word> getWordsByDate(Long userId, LocalDate date) {
@@ -55,12 +57,24 @@ public class WordService {
 
     @Transactional
     public Word saveWord(Word word) {
-        // Ensure userId is set (default to 1 if null for safety)
+        Objects.requireNonNull(word, "word must not be null");
         if (word.getUserId() == null) {
-            word.setUserId(1L);
+            throw new IllegalArgumentException("word.userId is required");
         }
 
         boolean isNew = (word.getId() == null);
+
+        // Idempotency: if same word already exists for user, return it without side effects
+        if (isNew && word.getEnglishWord() != null) {
+            Optional<Word> existing = wordRepository.findByUserIdAndEnglishWord(
+                word.getUserId(),
+                word.getEnglishWord()
+            );
+            if (existing.isPresent()) {
+                return existing.get();
+            }
+        }
+
         Word savedWord = wordRepository.save(word);
 
         if (isNew) {
@@ -74,19 +88,13 @@ public class WordService {
 
             // Social: Log Activity
             try {
-                // Using fully qualified name or import for ActivityType
-                feedService.logActivity(savedWord.getUserId(),
-                        com.ingilizce.calismaapp.entity.UserActivity.ActivityType.WORD_ADDED,
-                        "Learned a new word: " + savedWord.getEnglishWord());
+                activityPublisher.publishWordAdded(savedWord.getUserId(), savedWord.getEnglishWord());
             } catch (Exception e) {
-                System.err.println("Feed logging error: " + e.getMessage());
+                System.err.println("Activity publish error: " + e.getMessage());
             }
 
-            // Note: ProgressService might need updating to be user-aware too,
-            // but for now we assume it handles the current context or we pass userId later.
-            // Currently assuming ProgressService uses a default user or context.
-            progressService.awardXp(5, "New Word: " + word.getEnglishWord());
-            progressService.updateStreak();
+            progressService.awardXp(savedWord.getUserId(), 5, "New Word: " + word.getEnglishWord());
+            progressService.updateStreak(savedWord.getUserId());
         }
 
         return savedWord;
@@ -95,6 +103,7 @@ public class WordService {
     // Overload for convenience if needed, though usually verification happens at
     // controller
     public Word createWord(CreateWordRequest request, Long userId) {
+        Objects.requireNonNull(userId, "userId is required");
         Word word = new Word();
         word.setUserId(userId);
         word.setEnglishWord(request.getEnglish());
@@ -113,11 +122,7 @@ public class WordService {
 
     // Secure get method ensuring user owns the word
     public Optional<Word> getWordByIdAndUser(Long id, Long userId) {
-        Optional<Word> word = wordRepository.findById(id);
-        if (word.isPresent() && word.get().getUserId().equals(userId)) {
-            return word;
-        }
-        return Optional.empty();
+        return wordRepository.findByIdAndUserId(id, userId);
     }
 
     public void deleteWord(Long id, Long userId) {
@@ -148,9 +153,19 @@ public class WordService {
         Optional<Word> wordOpt = getWordByIdAndUser(wordId, userId);
         if (wordOpt.isPresent()) {
             Word word = wordOpt.get();
+
+            // Idempotency: if same sentence already exists, return word without side effects
+            if (sentence != null) {
+                List<Sentence> existingSentences = sentenceRepository
+                        .findByWordIdAndSentenceAndTranslation(wordId, sentence, translation);
+                if (!existingSentences.isEmpty()) {
+                    return word;
+                }
+            }
+
             Sentence newSentence = new Sentence(sentence, translation, difficulty != null ? difficulty : "easy", word);
             word.addSentence(newSentence);
-            progressService.awardXp(3, "New Sentence for: " + word.getEnglishWord());
+            progressService.awardXp(userId, 3, "New Sentence for: " + word.getEnglishWord());
             return wordRepository.save(word);
         }
         return null;

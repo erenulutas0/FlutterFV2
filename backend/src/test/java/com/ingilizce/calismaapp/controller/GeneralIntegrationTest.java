@@ -31,7 +31,7 @@ import static org.hamcrest.Matchers.*;
                 "spring.datasource.username=sa",
                 "spring.datasource.password=",
                 "spring.jpa.hibernate.ddl-auto=create-drop",
-                "spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.H2Dialect"
+                "app.features.community.enabled=false"
 })
 public class GeneralIntegrationTest {
 
@@ -64,7 +64,7 @@ public class GeneralIntegrationTest {
         }
 
         @Test
-        void fullFlow_ShouldWorksmoothly() throws Exception {
+        void fullFlow_ShouldWorkSmoothly_WhenCommunityFeaturesDisabled() throws Exception {
                 // 1. Create User A
                 User userA = new User("userA@test.com", "pass");
                 userA = userRepository.save(userA);
@@ -94,7 +94,7 @@ public class GeneralIntegrationTest {
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$", hasSize(1)));
 
-                // 5. User A sends Friend Request to User B
+                // 5. Community endpoints are disabled for the release scope
                 Map<String, String> friendRequest = new HashMap<>();
                 friendRequest.put("email", "userB@test.com");
 
@@ -102,33 +102,22 @@ public class GeneralIntegrationTest {
                                 .header("X-User-Id", userA.getId().toString())
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(objectMapper.writeValueAsString(friendRequest)))
-                                .andExpect(status().isOk())
-                                .andExpect(jsonPath("$.message").exists());
+                                .andExpect(status().isNotFound());
 
-                // 6. User B checks pending requests
+                // 6. Friend request listing is also disabled
                 mockMvc.perform(get("/api/friends/requests")
                                 .header("X-User-Id", userB.getId().toString()))
-                                .andExpect(status().isOk())
-                                .andExpect(jsonPath("$", hasSize(1)))
-                                .andExpect(jsonPath("$[0].requesterEmail").value("userA@test.com"));
+                                .andExpect(status().isNotFound());
 
-                // 7. Check Leaderboard (User A should have score from adding word)
-                // Score update is async in service? No, it's sync in WordService save.
-                // But it uses Redis.
-                // Note: Ideally we mock Redis, but LeaderboardServiceTest verified Redis
-                // interaction.
-                // Here we just check if endpoint responds without error.
+                // 7. Leaderboard endpoint is disabled
                 mockMvc.perform(get("/api/leaderboard/my-rank")
                                 .header("X-User-Id", userA.getId().toString()))
-                                .andExpect(status().isOk())
-                                .andExpect(jsonPath("$.userId").value(userA.getId()));
+                                .andExpect(status().isNotFound());
 
-                // 8. Check Feed (User A activity might be visible to friends, or global
-                // depending on impl)
-                // FeedService tracks activity.
+                // 8. Feed endpoint is disabled
                 mockMvc.perform(get("/api/feed")
                                 .header("X-User-Id", userA.getId().toString()))
-                                .andExpect(status().isOk());
+                                .andExpect(status().isNotFound());
 
                 // 9. Check User Profile
                 mockMvc.perform(get("/api/users/" + userA.getId()))

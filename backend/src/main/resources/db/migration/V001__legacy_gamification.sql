@@ -38,15 +38,22 @@ CREATE TABLE IF NOT EXISTS user_badges (
 );
 
 -- Friendships Table
-CREATE TABLE IF NOT EXISTS friendships (
-    id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES user_profiles(id) ON DELETE CASCADE,
-    friend_id BIGINT REFERENCES user_profiles(id) ON DELETE CASCADE,
-    status VARCHAR(20) CHECK (status IN ('pending', 'accepted', 'blocked', 'rejected')) DEFAULT 'pending',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, friend_id)
-);
+-- If core migration already created this table, skip without noisy NOTICE logs.
+DO $$
+BEGIN
+    IF to_regclass('public.friendships') IS NULL THEN
+        EXECUTE '
+            CREATE TABLE friendships (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT REFERENCES user_profiles(id) ON DELETE CASCADE,
+                friend_id BIGINT REFERENCES user_profiles(id) ON DELETE CASCADE,
+                status VARCHAR(20) CHECK (status IN (''pending'', ''accepted'', ''blocked'', ''rejected'')) DEFAULT ''pending'',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, friend_id)
+            )';
+    END IF;
+END $$;
 
 -- Weekly Scores for Leaderboard
 CREATE TABLE IF NOT EXISTS weekly_scores (
@@ -74,8 +81,42 @@ CREATE TABLE IF NOT EXISTS xp_transactions (
 CREATE INDEX IF NOT EXISTS idx_user_profiles_xp ON user_profiles(total_xp DESC);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_level ON user_profiles(level DESC);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_streak ON user_profiles(streak_days DESC);
-CREATE INDEX IF NOT EXISTS idx_friendships_user ON friendships(user_id, status);
-CREATE INDEX IF NOT EXISTS idx_friendships_friend ON friendships(friend_id, status);
+DO $$
+BEGIN
+    IF to_regclass('public.friendships') IS NOT NULL
+       AND EXISTS (
+           SELECT 1
+           FROM information_schema.columns
+           WHERE table_schema = 'public'
+             AND table_name = 'friendships'
+             AND column_name = 'user_id'
+       )
+       AND NOT EXISTS (
+           SELECT 1
+           FROM pg_indexes
+           WHERE schemaname = 'public'
+             AND indexname = 'idx_friendships_user'
+       ) THEN
+        EXECUTE 'CREATE INDEX idx_friendships_user ON friendships(user_id, status)';
+    END IF;
+
+    IF to_regclass('public.friendships') IS NOT NULL
+       AND EXISTS (
+           SELECT 1
+           FROM information_schema.columns
+           WHERE table_schema = 'public'
+             AND table_name = 'friendships'
+             AND column_name = 'friend_id'
+       )
+       AND NOT EXISTS (
+           SELECT 1
+           FROM pg_indexes
+           WHERE schemaname = 'public'
+             AND indexname = 'idx_friendships_friend'
+       ) THEN
+        EXECUTE 'CREATE INDEX idx_friendships_friend ON friendships(friend_id, status)';
+    END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_weekly_scores_week ON weekly_scores(week_start_date, weekly_xp DESC);
 CREATE INDEX IF NOT EXISTS idx_xp_transactions_user ON xp_transactions(user_id, created_at DESC);
 

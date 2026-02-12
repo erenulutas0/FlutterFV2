@@ -1,6 +1,8 @@
 package com.ingilizce.calismaapp.repository;
 
 import com.ingilizce.calismaapp.entity.Word;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -8,6 +10,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface WordRepository extends JpaRepository<Word, Long> {
@@ -17,8 +20,14 @@ public interface WordRepository extends JpaRepository<Word, Long> {
 
     // User Scoped Methods
     List<Word> findByUserId(Long userId);
+    Page<Word> findByUserId(Long userId, Pageable pageable);
+    long countByUserId(Long userId);
 
     List<Word> findByUserIdAndLearnedDate(Long userId, LocalDate date);
+
+    Optional<Word> findByIdAndUserId(Long id, Long userId);
+
+    Optional<Word> findByUserIdAndEnglishWord(Long userId, String englishWord);
 
     @Query("SELECT w FROM Word w WHERE w.userId = :userId AND w.learnedDate BETWEEN :startDate AND :endDate ORDER BY w.learnedDate DESC")
     List<Word> findByUserIdAndDateRange(@Param("userId") Long userId, @Param("startDate") LocalDate startDate,
@@ -41,4 +50,5 @@ public interface WordRepository extends JpaRepository<Word, Long> {
     List<Word> findByNextReviewDateLessThanEqual(LocalDate date);
 
     List<Word> findByReviewCountGreaterThan(int count);
+    List<Word> findByUserIdAndReviewCountGreaterThan(Long userId, int count);
 }

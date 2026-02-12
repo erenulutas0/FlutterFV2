@@ -217,7 +217,7 @@ class XPActionTypes {
     id: 'daily_word',
     name: 'Günün Kelimesi',
     description: 'Günün kelimesi öğrenildi/eklendi',
-    xpAmount: 15,
+    xpAmount: 10,
     category: 'daily',
   );
 
@@ -354,6 +354,14 @@ class XPManager {
       
       // Günlük XP kaydı (analitik için)
       await _recordDailyXP(action);
+
+      // XP geçmişi
+      await _localDb.addXpHistory(
+        actionId: action.id,
+        actionName: action.name,
+        amount: action.xpAmount,
+        source: source,
+      );
       
       // Cache'i güncelle (doğru değerle)
       _cachedTotalXP = newTotalXP;
@@ -384,7 +392,7 @@ class XPManager {
       final newTotalXP = currentXP + amount;
       
       await _localDb.addXp(amount);
-      
+
       // Günlük kayıt
       final prefs = await SharedPreferences.getInstance();
       final today = DateTime.now().toIso8601String().split('T')[0];
@@ -398,6 +406,14 @@ class XPManager {
       
       // SharedPreferences'a da kaydet (web için kalıcılık)
       await prefs.setInt('total_xp_persistent', newTotalXP);
+
+      // XP geçmişi
+      await _localDb.addXpHistory(
+        actionId: 'custom',
+        actionName: reason,
+        amount: amount,
+        source: reason,
+      );
       
       // Callback'i tetikle
       _onXPChanged?.call(newTotalXP, amount, reason);
@@ -434,6 +450,14 @@ class XPManager {
       
       // SharedPreferences'a da kaydet 
       await prefs.setInt('total_xp_persistent', newTotalXP);
+
+      // XP geçmişi (negatif miktar)
+      await _localDb.addXpHistory(
+        actionId: 'deduct',
+        actionName: reason,
+        amount: -amount,
+        source: reason,
+      );
       
       // Callback'i tetikle
       _onXPChanged?.call(newTotalXP, -amount, reason);

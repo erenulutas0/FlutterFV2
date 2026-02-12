@@ -6,13 +6,13 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class IyzicoConfig {
 
-    @Value("${iyzico.api.key:sandbox-your-key}")
+    @Value("${iyzico.api.key}")
     private String apiKey;
 
-    @Value("${iyzico.api.secret:sandbox-your-secret}")
+    @Value("${iyzico.api.secret}")
     private String secretKey;
 
-    @Value("${iyzico.api.base.url:https://sandbox-api.iyzipay.com}")
+    @Value("${iyzico.api.base.url}")
     private String baseUrl;
 
     public String getApiKey() {

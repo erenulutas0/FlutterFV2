@@ -1,5 +1,7 @@
 package com.ingilizce.calismaapp.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import java.io.*;
@@ -11,12 +13,20 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
 
 @Service
 public class PiperTtsService {
+    private static final Logger log = LoggerFactory.getLogger(PiperTtsService.class);
 
     @Value("${piper.tts.path:}")
     private String configuredPiperPath;
+
+    @Value("${piper.tts.default-model:en_US-amy-medium.onnx}")
+    private String configuredDefaultModel;
 
     // --- KRİTİK DEĞİŞİKLİK BURADA ---
     // Modelleri Türkçe karakter sorunu olmaması için C:\piper klasöründen okuyoruz.
@@ -47,22 +57,22 @@ public class PiperTtsService {
             String modelFile = getModelFile(voice);
 
             // Create temporary output file
-            String tempDir = System.getProperty("java.io.tmpdir");
-            String outputFile = tempDir + File.separator + UUID.randomUUID().toString() + ".wav";
+            Path outputPath = createTempOutputPath();
+            String outputFile = outputPath.toString();
 
             // Build Piper command - use absolute path for model file
             File modelFileObj = new File(modelFile);
             String absoluteModelPath = modelFileObj.getAbsolutePath();
 
             // Verify model file exists
-            if (!modelFileObj.exists()) {
+            if (!pathExists(absoluteModelPath)) {
                 throw new RuntimeException("Model file not found at SAFE path: " + absoluteModelPath);
             }
-            System.out.println("Using SAFE model file: " + absoluteModelPath);
-            System.out.println("Model file exists: " + modelFileObj.exists());
+            log.debug("Using SAFE model file: {}", absoluteModelPath);
+            log.debug("Model file exists: {}", pathExists(absoluteModelPath));
 
             String piperPath = findPiperPath();
-            System.out.println("Using Piper path: " + piperPath);
+            log.debug("Using Piper path: {}", piperPath);
 
             // Working directory setup moved here
             File workingDir = new File(MODEL_BASE_DIR);
@@ -87,7 +97,7 @@ public class PiperTtsService {
                 try {
                     stdin.close();
                 } catch (IOException e) {
-                    System.err.println("Error closing stdin: " + e.getMessage());
+                    log.warn("Error closing Piper stdin", e);
                 }
             }
 
@@ -102,10 +112,10 @@ public class PiperTtsService {
                     String line;
                     while ((line = reader.readLine()) != null) {
                         output.append(line).append("\n");
-                        System.out.println("Piper output: " + line);
+                        log.debug("Piper output: {}", line);
                     }
                 } catch (IOException e) {
-                    System.err.println("Error reading Piper output: " + e.getMessage());
+                    log.warn("Error reading Piper output", e);
                 }
             });
             outputThread.setDaemon(true);
@@ -125,17 +135,16 @@ public class PiperTtsService {
             if (exitCode != 0) {
                 String errorMsg = output.length() > 0 ? output.toString()
                         : "Unknown error (exit code: " + exitCode + ")";
-                System.err.println("Piper TTS failed with exit code: " + exitCode);
-                System.err.println("Piper output: " + errorMsg);
+                log.error("Piper TTS failed with exit code={}", exitCode);
+                log.error("Piper output: {}", errorMsg);
                 throw new RuntimeException("Piper TTS failed: " + errorMsg);
             }
 
             // Read generated audio file
-            Path audioPath = Paths.get(outputFile);
-            byte[] audioData = Files.readAllBytes(audioPath);
+            byte[] audioData = readAllBytes(outputPath);
 
             // Clean up temporary file
-            Files.deleteIfExists(audioPath);
+            deleteIfExists(outputPath);
 
             // Return base64 encoded audio
             return Base64.getEncoder().encodeToString(audioData);
@@ -148,88 +157,56 @@ public class PiperTtsService {
     /**
      * Get model file path based on voice name
      */
-    private String getModelFile(String voice) {
-        if (voice == null || voice.isEmpty()) {
-            voice = "amy"; // Default to amy since it's available
+    protected String getModelFile(String voice) {
+        String normalizedVoice = normalizeVoice(voice);
+        Map<String, String> voiceModels = getVoiceModelMap();
+
+        String requestedModel = voiceModels.getOrDefault(normalizedVoice, getDefaultModelName());
+        String requestedPath = getModelBaseDir() + File.separator + requestedModel;
+        if (pathExists(requestedPath)) {
+            log.debug("Selected model path (SAFE): {}", requestedPath);
+            return requestedPath;
         }
 
-        // Normalize voice name
-        String voiceName = voice.toLowerCase();
-
-        String modelFileName;
-        switch (voiceName) {
-            case "amy":
-                modelFileName = MODEL_AMY;
-                break;
-            case "alan":
-                modelFileName = MODEL_ALAN;
-                break;
-            case "lessac":
-                modelFileName = MODEL_LESSAC;
-                break;
-            case "ryan":
-                modelFileName = MODEL_RYAN;
-                break;
-            case "jenny_dioco":
-            case "jenny":
-                modelFileName = MODEL_JENNY;
-                break;
-            case "cori":
-                modelFileName = MODEL_CORI;
-                break;
-            default:
-                // Fallback to amy if requested voice not found in config
-                System.out.println("Unknown voice requested: " + voice + ", using Amy");
-                modelFileName = MODEL_AMY;
-                break;
+        if (!voiceModels.containsKey(normalizedVoice)) {
+            log.warn("Unknown voice requested: {}, falling back to default model", voice);
+        } else {
+            log.warn("Requested voice model not found: {}", requestedPath);
         }
 
-        // Construct full path: C:\piper + \ + en_US-amy-medium.onnx
-        String fullPath = MODEL_BASE_DIR + File.separator + modelFileName;
-
-        // Check if file exists, if not fallback
-        File modelFile = new File(fullPath);
-        if (!modelFile.exists()) {
-            System.out.println("Model not found: " + fullPath);
-
-            // SMART FALLBACK: Cinsiyete göre yedekleme
-            if (voiceName.equals("ryan") || voiceName.equals("alan")) {
-                // Erkek sesi istendi ama bulunamadı -> Varsa diğer erkek sesini dene (önce
-                // Alan)
-                String alanPath = MODEL_BASE_DIR + File.separator + MODEL_ALAN;
-                if (new File(alanPath).exists()) {
-                    System.out.println("Falling back to ALAN (Male) for missing male voice");
-                    return alanPath;
-                }
-            }
-
-            // Son çare AMY (Kadın)
-            System.out.println("Falling back to AMY (Default)");
-            fullPath = MODEL_BASE_DIR + File.separator + MODEL_AMY;
+        String defaultPath = getModelBaseDir() + File.separator + getDefaultModelName();
+        if (pathExists(defaultPath)) {
+            log.info("Falling back to configured default model: {}", defaultPath);
+            return defaultPath;
         }
 
-        System.out.println("Selected model path (SAFE): " + fullPath);
-        return fullPath;
+        String firstAvailable = resolveFirstAvailableModelPath();
+        if (firstAvailable != null) {
+            log.info("Falling back to first available model: {}", firstAvailable);
+            return firstAvailable;
+        }
+
+        // Let caller fail with explicit model-not-found message.
+        log.warn("No Piper model file found under {}", getModelBaseDir());
+        return defaultPath;
     }
 
     /**
      * Find Piper executable path
      */
-    private String findPiperPath() {
+    protected String findPiperPath() {
         // First, try configured path
         if (configuredPiperPath != null && !configuredPiperPath.trim().isEmpty()) {
             String path = configuredPiperPath.trim();
 
-            File file = new File(path);
-
-            if (file.exists()) {
-                return file.getAbsolutePath();
+            if (pathExists(path)) {
+                return absolutePath(path);
             }
         }
 
         // Try common locations (including our new safe location)
         // Docker'da Linux path'leri, Windows'ta Windows path'leri
-        boolean isWindows = System.getProperty("os.name").toLowerCase().contains("windows");
+        boolean isWindows = isWindows();
         String[] pathsToTry = isWindows ? new String[] {
                 "C:\\piper\\piper.exe", // Windows location
                 "piper.exe",
@@ -242,9 +219,8 @@ public class PiperTtsService {
                 };
 
         for (String path : pathsToTry) {
-            File file = new File(path);
-            if (file.exists() && file.canExecute()) {
-                return file.getAbsolutePath();
+            if (pathExists(path) && pathCanExecute(path)) {
+                return absolutePath(path);
             }
             // Check if it's just a command available in PATH
             if (!path.contains(File.separator) && !path.contains("/") && !path.contains("\\")) {
@@ -261,11 +237,9 @@ public class PiperTtsService {
     public boolean isAvailable() {
         try {
             String piperPath = findPiperPath();
-            System.out.println("Trying Piper path: " + piperPath);
+            log.debug("Trying Piper path: {}", piperPath);
 
-            ProcessBuilder processBuilder = new ProcessBuilder(piperPath, "--version");
-            processBuilder.redirectErrorStream(true);
-            Process process = processBuilder.start();
+            Process process = startAvailabilityProcess(piperPath);
 
             long startTime = System.currentTimeMillis();
             while (process.isAlive() && (System.currentTimeMillis() - startTime) < 5000) {
@@ -279,19 +253,81 @@ public class PiperTtsService {
 
             int exitCode = process.exitValue();
 
-            // Also check if model file exists in the NEW location
-            String amyModelPath = MODEL_BASE_DIR + File.separator + MODEL_AMY;
-            File amyModel = new File(amyModelPath);
-            boolean modelExists = amyModel.exists();
+            String modelPath = resolveFirstAvailableModelPath();
+            boolean modelExists = modelPath != null;
 
-            System.out.println("Piper TTS check - path: " + piperPath + ", exitCode: " + exitCode + ", modelExists: "
-                    + modelExists);
+            log.debug("Piper TTS check - path: {}, exitCode: {}, modelPath: {}", piperPath, exitCode, modelPath);
 
             return exitCode == 0 && modelExists;
         } catch (Exception e) {
-            System.err.println("Piper TTS availability check failed: " + e.getMessage());
+            log.warn("Piper TTS availability check failed", e);
             return false;
         }
+    }
+
+    public String[] getSupportedVoices() {
+        Map<String, String> voiceModels = getVoiceModelMap();
+        Set<String> supported = new LinkedHashSet<>();
+
+        String defaultPath = getModelBaseDir() + File.separator + getDefaultModelName();
+        if (pathExists(defaultPath)) {
+            supported.add("default");
+        }
+
+        for (Map.Entry<String, String> entry : voiceModels.entrySet()) {
+            String voice = entry.getKey();
+            if ("default".equals(voice)) {
+                continue;
+            }
+
+            String modelPath = getModelBaseDir() + File.separator + entry.getValue();
+            if (pathExists(modelPath)) {
+                supported.add(voice);
+            }
+        }
+
+        return supported.toArray(new String[0]);
+    }
+
+    private String normalizeVoice(String voice) {
+        if (voice == null || voice.trim().isEmpty()) {
+            return "default";
+        }
+        String normalized = voice.trim().toLowerCase();
+        if ("jenny_dioco".equals(normalized)) {
+            return "jenny";
+        }
+        return normalized;
+    }
+
+    private String getDefaultModelName() {
+        if (configuredDefaultModel == null || configuredDefaultModel.trim().isEmpty()) {
+            return MODEL_AMY;
+        }
+        return configuredDefaultModel.trim();
+    }
+
+    private Map<String, String> getVoiceModelMap() {
+        Map<String, String> voiceModels = new LinkedHashMap<>();
+        voiceModels.put("default", getDefaultModelName());
+        voiceModels.put("amy", MODEL_AMY);
+        voiceModels.put("alan", MODEL_ALAN);
+        voiceModels.put("lessac", MODEL_LESSAC);
+        voiceModels.put("ryan", MODEL_RYAN);
+        voiceModels.put("jenny", MODEL_JENNY);
+        voiceModels.put("cori", MODEL_CORI);
+        return voiceModels;
+    }
+
+    private String resolveFirstAvailableModelPath() {
+        Set<String> modelNames = new LinkedHashSet<>(getVoiceModelMap().values());
+        for (String modelName : modelNames) {
+            String modelPath = getModelBaseDir() + File.separator + modelName;
+            if (pathExists(modelPath)) {
+                return modelPath;
+            }
+        }
+        return null;
     }
 
     /**
@@ -304,5 +340,44 @@ public class PiperTtsService {
         }
         processBuilder.redirectErrorStream(true);
         return processBuilder.start();
+    }
+
+    protected Process startAvailabilityProcess(String piperPath) throws IOException {
+        ProcessBuilder processBuilder = new ProcessBuilder(piperPath, "--version");
+        processBuilder.redirectErrorStream(true);
+        return processBuilder.start();
+    }
+
+    protected boolean pathExists(String path) {
+        return new File(path).exists();
+    }
+
+    protected boolean pathCanExecute(String path) {
+        return new File(path).canExecute();
+    }
+
+    protected String absolutePath(String path) {
+        return new File(path).getAbsolutePath();
+    }
+
+    protected Path createTempOutputPath() {
+        String tempDir = System.getProperty("java.io.tmpdir");
+        return Paths.get(tempDir, UUID.randomUUID() + ".wav");
+    }
+
+    protected byte[] readAllBytes(Path path) throws IOException {
+        return Files.readAllBytes(path);
+    }
+
+    protected void deleteIfExists(Path path) throws IOException {
+        Files.deleteIfExists(path);
+    }
+
+    protected String getModelBaseDir() {
+        return MODEL_BASE_DIR;
+    }
+
+    protected boolean isWindows() {
+        return System.getProperty("os.name").toLowerCase().contains("windows");
     }
 }

@@ -121,4 +121,46 @@ class WordReviewServiceTest {
         wordReviewService.deleteReview(1L);
         verify(wordReviewRepository).deleteById(1L);
     }
+
+    @Test
+    void isWordReviewedOnDate_ShouldReturnRepositoryValue() {
+        when(wordReviewRepository.existsByWordIdAndReviewDate(100L, today)).thenReturn(true);
+
+        boolean reviewed = wordReviewService.isWordReviewedOnDate(100L, today);
+
+        assertTrue(reviewed);
+    }
+
+    @Test
+    void getReviewCount_ShouldReturnRepositoryCount() {
+        when(wordReviewRepository.countByWordId(100L)).thenReturn(5L);
+
+        long count = wordReviewService.getReviewCount(100L);
+
+        assertEquals(5L, count);
+    }
+
+    @Test
+    void getReviewDates_ShouldReturnDateListInOrderProvidedByRepository() {
+        LocalDate older = today.minusDays(1);
+        WordReview olderReview = new WordReview(testWord, older);
+        when(wordReviewRepository.findByWordIdOrderByReviewDateDesc(100L))
+                .thenReturn(Arrays.asList(testReview, olderReview));
+
+        List<LocalDate> dates = wordReviewService.getReviewDates(100L);
+
+        assertEquals(Arrays.asList(today, older), dates);
+    }
+
+    @Test
+    void deleteReviewByWordAndDate_ShouldDeleteAllMatchedReviews() {
+        WordReview second = new WordReview(testWord, today);
+        second.setId(2L);
+        List<WordReview> reviews = Arrays.asList(testReview, second);
+        when(wordReviewRepository.findByWordIdAndReviewDate(100L, today)).thenReturn(reviews);
+
+        wordReviewService.deleteReviewByWordAndDate(100L, today);
+
+        verify(wordReviewRepository).deleteAll(reviews);
+    }
 }

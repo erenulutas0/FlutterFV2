@@ -55,6 +55,7 @@ class _NavigationMenuPanelState extends State<NavigationMenuPanel>
     MenuItemData(id: 'speaking', label: 'Konuşma', icon: Icons.chat_bubble_outline),
     MenuItemData(id: 'repeat', label: 'Tekrar', icon: Icons.replay),
     MenuItemData(id: 'dictionary', label: 'Sözlük', icon: Icons.book),
+    MenuItemData(id: 'xp-history', label: 'XP Geçmişi', icon: Icons.history),
   ];
 
   @override

@@ -9,6 +9,7 @@ import com.ingilizce.calismaapp.repository.UserRepository;
 import com.ingilizce.calismaapp.service.IyzicoService;
 // iyzico SDK removed
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -18,7 +19,6 @@ import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/subscription")
-@CrossOrigin(originPatterns = "*")
 public class SubscriptionController {
 
     private final SubscriptionPlanRepository planRepository;
@@ -44,10 +44,9 @@ public class SubscriptionController {
     @PostMapping("/pay/iyzico")
     public ResponseEntity<Map<String, Object>> initializeIyzico(
             @RequestBody Map<String, Object> request,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
+            @RequestHeader("X-User-Id") Long userId) {
 
         try {
-            Long userId = getUserId(userIdHeader);
             Long planId = Long.parseLong(request.get("planId").toString());
             String callbackUrl = request.get("callbackUrl").toString();
 
@@ -93,65 +92,77 @@ public class SubscriptionController {
 
     @PostMapping("/verify/apple")
     public ResponseEntity<Map<String, Object>> verifyApplePurchase(@RequestBody Map<String, String> request,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        Long userId = getUserId(userIdHeader);
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+            @RequestHeader("X-User-Id") Long userId) {
+        try {
+            Optional<User> userOpt = userRepository.findById(userId);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.internalServerError().body(Map.of("error", "User not found"));
+            }
+            User user = userOpt.get();
 
-        String planName = request.get("planName");
+            String planName = request.get("planName");
 
-        // In a real scenario, we would verify the receipt with Apple's verifyReceipt
-        // API
-        // For demonstration, we simulate success
-        SubscriptionPlan plan = planRepository.findByName(planName)
-                .orElseThrow(() -> new RuntimeException("Plan not found"));
+            // In a real scenario, we would verify the receipt with Apple's verifyReceipt API.
+            // For demonstration, we simulate success.
+            Optional<SubscriptionPlan> planOpt = planRepository.findByName(planName);
+            if (planOpt.isEmpty()) {
+                return ResponseEntity.internalServerError().body(Map.of("error", "Plan not found"));
+            }
+            SubscriptionPlan plan = planOpt.get();
 
-        user.setSubscriptionEndDate(LocalDateTime.now().plusDays(plan.getDurationDays()));
-        userRepository.save(user);
+            user.setSubscriptionEndDate(LocalDateTime.now().plusDays(plan.getDurationDays()));
+            userRepository.save(user);
 
-        return ResponseEntity
-                .ok(Map.of("message", "Apple IAP verified", "subscriptionEndDate", user.getSubscriptionEndDate()));
+            return ResponseEntity
+                    .ok(Map.of("message", "Apple IAP verified", "subscriptionEndDate", user.getSubscriptionEndDate()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
     }
 
     @PostMapping("/verify/google")
     public ResponseEntity<Map<String, Object>> verifyGooglePurchase(@RequestBody Map<String, String> request,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
-        Long userId = getUserId(userIdHeader);
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
-
-        String planName = request.get("planName");
-
-        // In a real scenario, we would use Google Play Developer API to verify
-        SubscriptionPlan plan = planRepository.findByName(planName)
-                .orElseThrow(() -> new RuntimeException("Plan not found"));
-
-        user.setSubscriptionEndDate(LocalDateTime.now().plusDays(plan.getDurationDays()));
-        userRepository.save(user);
-
-        return ResponseEntity
-                .ok(Map.of("message", "Google IAP verified", "subscriptionEndDate", user.getSubscriptionEndDate()));
-    }
-
-    private Long getUserId(String header) {
-        if (header == null)
-            return 1L; // Fallback for demo
+            @RequestHeader("X-User-Id") Long userId) {
         try {
-            return Long.parseLong(header);
-        } catch (NumberFormatException e) {
-            return 1L;
+            Optional<User> userOpt = userRepository.findById(userId);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.internalServerError().body(Map.of("error", "User not found"));
+            }
+            User user = userOpt.get();
+
+            String planName = request.get("planName");
+
+            // In a real scenario, we would use Google Play Developer API to verify.
+            Optional<SubscriptionPlan> planOpt = planRepository.findByName(planName);
+            if (planOpt.isEmpty()) {
+                return ResponseEntity.internalServerError().body(Map.of("error", "Plan not found"));
+            }
+            SubscriptionPlan plan = planOpt.get();
+
+            user.setSubscriptionEndDate(LocalDateTime.now().plusDays(plan.getDurationDays()));
+            userRepository.save(user);
+
+            return ResponseEntity
+                    .ok(Map.of("message", "Google IAP verified", "subscriptionEndDate", user.getSubscriptionEndDate()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
         }
     }
 
     @PostMapping("/callback/iyzico")
+    @Transactional
     public ResponseEntity<String> handleCallback(@RequestParam String token) {
         // In a real scenario, we would verify the payment with iyzico using the token
         // Here we mark it as success for demonstration once iyzico calls back
-        Optional<PaymentTransaction> transactionOpt = transactionRepository.findByTransactionId(token);
+        Optional<PaymentTransaction> transactionOpt = transactionRepository.findByTransactionIdWithUserAndPlan(token);
         if (transactionOpt.isEmpty()) {
             return ResponseEntity.badRequest().body("Transaction not found");
         }
         PaymentTransaction transaction = transactionOpt.get();
+
+        if (transaction.getStatus() == PaymentTransaction.Status.SUCCESS) {
+            return ResponseEntity.ok("Payment already processed.");
+        }
 
         transaction.setStatus(PaymentTransaction.Status.SUCCESS);
         transactionRepository.save(transaction);
@@ -177,10 +188,9 @@ public class SubscriptionController {
     @PostMapping("/demo/activate")
     public ResponseEntity<Map<String, Object>> activateDemoSubscription(
             @RequestBody Map<String, Object> request,
-            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader) {
+            @RequestHeader("X-User-Id") Long userId) {
 
         try {
-            Long userId = getUserId(userIdHeader);
             Long planId = Long.parseLong(request.get("planId").toString());
 
             Optional<User> userOpt = userRepository.findById(userId);

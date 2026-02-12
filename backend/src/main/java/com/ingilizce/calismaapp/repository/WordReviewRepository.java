@@ -32,4 +32,7 @@ public interface WordReviewRepository extends JpaRepository<WordReview, Long> {
     
     // Count reviews for a word
     long countByWordId(Long wordId);
+
+    // Count all reviews that belong to a specific user (via word owner)
+    long countByWordUserId(Long userId);
 }

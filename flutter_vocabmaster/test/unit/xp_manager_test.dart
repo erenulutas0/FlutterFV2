@@ -43,6 +43,19 @@ void main() {
       expect(totalXP, 10);
     });
 
+    test('XP history is recorded when XP is added', () async {
+      await xpManager.addXP(XPActionTypes.addWord);
+      final history = await LocalDatabaseService().getXpHistory(limit: 10);
+      expect(history.isNotEmpty, true);
+      expect(history.first['actionId'], 'add_word');
+    });
+
+    test('Daily Word XP is +10', () async {
+      final addedAmount = await xpManager.addXP(XPActionTypes.dailyWordLearn);
+      expect(addedAmount, 10);
+      expect(await xpManager.getTotalXP(), 10);
+    });
+
     test('Adding Sentence XP (+5) updates total XP correctly', () async {
       // Action: Add Sentence XP
       final addedAmount = await xpManager.addXP(XPActionTypes.addSentence);

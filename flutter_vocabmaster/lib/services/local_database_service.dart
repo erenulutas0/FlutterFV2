@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:isolate';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/word.dart';
@@ -13,6 +15,13 @@ class LocalDatabaseService {
   LocalDatabaseService._internal();
 
   Database? _database;
+  String? _dbPath;
+  static bool _forceTestMode = false;
+
+  @visibleForTesting
+  static void enableTestMode() {
+    _forceTestMode = true;
+  }
 
   Future<Database> get database async {
     if (_database != null) return _database!;
@@ -22,14 +31,40 @@ class LocalDatabaseService {
 
   Future<Database> _initDatabase() async {
     final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'vocabmaster_offline.db');
+    final isTest = _forceTestMode || const bool.fromEnvironment('FLUTTER_TEST');
+    final dbName = isTest
+        ? 'vocabmaster_offline_test_${Isolate.current.hashCode}.db'
+        : 'vocabmaster_offline.db';
+    final path = join(dbPath, dbName);
+    _dbPath = path;
 
     return await openDatabase(
       path,
       version: 2,
+      singleInstance: !isTest,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
+      onOpen: (db) async {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS xp_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actionId TEXT NOT NULL,
+            actionName TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            source TEXT,
+            createdAt TEXT NOT NULL
+          )
+        ''');
+      },
     );
+  }
+
+  @visibleForTesting
+  Future<void> close() async {
+    if (_database != null) {
+      await _database!.close();
+      _database = null;
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -103,6 +138,18 @@ class LocalDatabaseService {
       )
     ''');
 
+    // XP geçmişi tablosu
+    await db.execute('''
+      CREATE TABLE xp_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        actionId TEXT NOT NULL,
+        actionName TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        source TEXT,
+        createdAt TEXT NOT NULL
+      )
+    ''');
+
     // İlk kullanıcı stats kaydı
     await db.insert('user_stats', {
       'totalXp': 0,
@@ -117,6 +164,17 @@ class LocalDatabaseService {
       // Yeni tablolar ekle
       await _onCreate(db, newVersion);
     }
+    // XP history tablosu eksikse ekle (korumalı)
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS xp_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        actionId TEXT NOT NULL,
+        actionName TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        source TEXT,
+        createdAt TEXT NOT NULL
+      )
+    ''');
   }
 
   // ==================== WORDS ====================
@@ -128,14 +186,18 @@ class LocalDatabaseService {
     
     List<Word> words = [];
     for (var wordMap in wordMaps) {
+      final rawWordId = wordMap['id'];
+      final rawLocalId = wordMap['localId'];
+      final intWordId = (rawWordId is int) ? rawWordId : (rawWordId is num) ? rawWordId.toInt() : 0;
+      final intLocalId = (rawLocalId is int) ? rawLocalId : (rawLocalId is num) ? rawLocalId.toInt() : intWordId;
       final sentences = await db.query(
         'sentences',
         where: 'wordId = ? OR localWordId = ?',
-        whereArgs: [wordMap['id'], wordMap['localId']],
+        whereArgs: [intWordId, intLocalId],
       );
       
       words.add(Word(
-        id: wordMap['id'] ?? wordMap['localId'] ?? 0,
+        id: intWordId != 0 ? intWordId : intLocalId,
         englishWord: wordMap['englishWord'] ?? '',
         turkishMeaning: wordMap['turkishMeaning'] ?? '',
         learnedDate: DateTime.parse(wordMap['learnedDate']),
@@ -242,9 +304,9 @@ class LocalDatabaseService {
 
     // Sync queue'ya ekle
     await addToSyncQueue('create', 'words', localId.toString(), {
-      'englishWord': english,
-      'turkishMeaning': turkish,
-      'learnedDate': addedDate.toIso8601String().split('T')[0],
+      'english': english,
+      'turkish': turkish,
+      'addedDate': addedDate.toIso8601String(),
       'difficulty': difficulty,
     });
 
@@ -647,6 +709,7 @@ class LocalDatabaseService {
     await db.delete('sentences');
     await db.delete('practice_sentences');
     await db.delete('sync_queue');
+    await db.delete('xp_history');
     // user_stats'ı sıfırla
     await db.update('user_stats', {
       'totalXp': 0,
@@ -680,6 +743,33 @@ class LocalDatabaseService {
       'data': data.isNotEmpty ? jsonEncode(data) : null,
       'createdAt': DateTime.now().toIso8601String(),
     });
+  }
+
+  // ==================== XP HISTORY ====================
+
+  Future<void> addXpHistory({
+    required String actionId,
+    required String actionName,
+    required int amount,
+    String? source,
+  }) async {
+    final db = await database;
+    await db.insert('xp_history', {
+      'actionId': actionId,
+      'actionName': actionName,
+      'amount': amount,
+      'source': source,
+      'createdAt': DateTime.now().toIso8601String(),
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getXpHistory({int limit = 200}) async {
+    final db = await database;
+    return await db.query(
+      'xp_history',
+      orderBy: 'createdAt DESC',
+      limit: limit,
+    );
   }
 
 }

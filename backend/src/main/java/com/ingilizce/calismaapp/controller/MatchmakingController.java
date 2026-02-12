@@ -6,6 +6,9 @@ import com.ingilizce.calismaapp.service.MatchmakingService;
 import com.ingilizce.calismaapp.service.MatchmakingService.MatchInfo;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -14,7 +17,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
+@ConditionalOnProperty(name = { "app.features.community.enabled", "app.socketio.enabled" }, havingValue = "true", matchIfMissing = false)
 public class MatchmakingController {
+    private static final Logger log = LoggerFactory.getLogger(MatchmakingController.class);
 
     @Autowired
     private SocketIOServer socketIOServer;
@@ -29,15 +34,13 @@ public class MatchmakingController {
     public void startSocketIOServer() {
         // Event listener'ları manuel olarak ekle
         socketIOServer.addConnectListener(client -> {
-            System.out.println("=== CLIENT CONNECTED ===");
-            System.out.println("Session ID: " + client.getSessionId());
-            System.out.println("Remote Address: " + client.getRemoteAddress());
+            log.info("Client connected: sessionId={}, remoteAddress={}", client.getSessionId(), client.getRemoteAddress());
         });
 
         socketIOServer.addDisconnectListener(client -> {
             String userId = client.get("userId");
             if (userId != null) {
-                System.out.println("Client disconnected: " + userId);
+                log.info("Client disconnected: userId={}", userId);
 
                 // Eğer aktif bir eşleşme varsa, diğer kullanıcıya bildir
                 MatchInfo match = matchmakingService.getMatch(userId);
@@ -49,8 +52,7 @@ public class MatchmakingController {
                         matchedClient.leaveRoom(match.roomId);
                         // call_ended event'i gönder
                         matchedClient.sendEvent("call_ended");
-                        System.out.println(
-                                "Sent call_ended to matched user: " + matchedUserId + " in room: " + match.roomId);
+                        log.info("Sent call_ended to matched userId={} in roomId={}", matchedUserId, match.roomId);
                     }
                     // Eşleşmeyi sonlandır
                     matchmakingService.endMatch(userId);
@@ -59,40 +61,42 @@ public class MatchmakingController {
                 matchmakingService.leaveQueue(userId);
                 userIdToClient.remove(userId); // Client'ı map'ten kaldır
             } else {
-                System.out.println("Client disconnected: " + client.getSessionId() + " (userId not set)");
+                log.info("Client disconnected: sessionId={} (userId not set)", client.getSessionId());
             }
         });
 
         // join_queue event listener
         socketIOServer.addEventListener("join_queue", Map.class, (client, data, ackRequest) -> {
-            System.out.println("=== join_queue event received ===");
-            System.out.println("Data: " + data);
-            System.out.println("Client SessionId: " + client.getSessionId());
+            log.info("join_queue event received: sessionId={}, payload={}", client.getSessionId(), data);
 
             String userId = null;
             if (data.get("userId") != null) {
                 userId = data.get("userId").toString();
             }
 
-            if (userId == null || userId.isEmpty()) {
-                userId = client.getSessionId().toString();
+            if (userId == null || userId.isBlank()) {
+                Map<String, Object> error = new HashMap<>();
+                error.put("status", "error");
+                error.put("error", "userId is required");
+                client.sendEvent("queue_error", error);
+                log.warn("Rejected join_queue: missing userId for sessionId={}", client.getSessionId());
+                return;
             }
 
-            System.out.println("User ID: " + userId);
+            log.info("join_queue accepted: userId={}", userId);
 
             client.set("userId", userId);
             userIdToClient.put(userId, client); // Client mapping'i ekle
 
             MatchInfo match = matchmakingService.joinQueue(userId);
 
-            System.out.println("Match result: " + (match != null ? "FOUND" : "WAITING"));
-            System.out.println("Queue size: " + matchmakingService.getQueueSize());
+            log.info("Match result={}, queueSize={}", match != null ? "FOUND" : "WAITING", matchmakingService.getQueueSize());
 
             Map<String, Object> response = new HashMap<>();
 
             if (match != null) {
                 // Eşleşme bulundu!
-                System.out.println("Match found! Room: " + match.roomId);
+                log.info("Match found: roomId={}", match.roomId);
                 String matchedUserId = match.user1.equals(userId) ? match.user2 : match.user1;
 
                 // Rolleri belirle: user1 caller (arayan), user2 callee (aranan)
@@ -107,11 +111,9 @@ public class MatchmakingController {
                 response1.put("matchedUserId", matchedUserId);
                 String role1 = callerUserId.equals(userId) ? "caller" : "callee";
                 response1.put("role", role1);
-                System.out.println("DEBUG: response1 map contents: " + response1);
-                System.out.println("DEBUG: response1.get('role'): " + response1.get("role"));
+                log.debug("match_found payload for userId={}: {}", userId, response1);
                 client.sendEvent("match_found", response1);
-                System.out.println("Sent match_found event to user: " + userId + " with role: " + role1
-                        + " (callerUserId: " + callerUserId + ", userId: " + userId + ")");
+                log.info("Sent match_found event: userId={}, role={}, roomId={}", userId, role1, match.roomId);
 
                 // Callee'ye (user2) bildir
                 SocketIOClient matchedClient = userIdToClient.get(matchedUserId);
@@ -122,20 +124,18 @@ public class MatchmakingController {
                     response2.put("matchedUserId", userId);
                     String role2 = calleeUserId.equals(matchedUserId) ? "callee" : "caller";
                     response2.put("role", role2);
-                    System.out.println("DEBUG: response2 map contents: " + response2);
-                    System.out.println("DEBUG: response2.get('role'): " + response2.get("role"));
+                    log.debug("match_found payload for matchedUserId={}: {}", matchedUserId, response2);
                     matchedClient.sendEvent("match_found", response2);
-                    System.out.println("Sent match_found event to user: " + matchedUserId + " with role: " + role2
-                            + " (calleeUserId: " + calleeUserId + ", matchedUserId: " + matchedUserId + ")");
+                    log.info("Sent match_found event: matchedUserId={}, role={}, roomId={}", matchedUserId, role2, match.roomId);
                 } else {
-                    System.out.println("WARNING: Matched client not found for userId: " + matchedUserId);
+                    log.warn("Matched client not found for userId={}", matchedUserId);
                 }
             } else {
                 // Kuyrukta bekliyor
                 response.put("status", "waiting");
                 response.put("queueSize", matchmakingService.getQueueSize());
                 client.sendEvent("queue_status", response);
-                System.out.println("Sent queue_status event to client");
+                log.info("Sent queue_status event: userId={}, queueSize={}", userId, matchmakingService.getQueueSize());
             }
         });
 
@@ -154,56 +154,52 @@ public class MatchmakingController {
 
             if (roomId != null && userId != null) {
                 client.joinRoom(roomId);
-                System.out.println("User " + userId + " joined room " + roomId);
+                log.info("User joined room: userId={}, roomId={}", userId, roomId);
             }
         });
 
         // WebRTC offer event listener
         socketIOServer.addEventListener("webrtc_offer", Map.class, (client, data, ackRequest) -> {
-            System.out.println("=== WebRTC OFFER EVENT RECEIVED ===");
-            System.out.println("Raw data: " + data);
-            System.out.println("Data type: " + (data != null ? data.getClass().getName() : "null"));
+            log.info("WebRTC offer event received: payloadType={}", data != null ? data.getClass().getName() : "null");
 
             String roomId = (String) data.get("roomId");
             String userId = client.get("userId");
 
-            System.out.println("WebRTC offer received from " + userId + " in room " + roomId);
+            log.info("WebRTC offer received: userId={}, roomId={}", userId, roomId);
 
             Object offerObj = data.get("offer");
-            System.out.println("Offer object: " + offerObj);
-            System.out.println("Offer type: " + (offerObj != null ? offerObj.getClass().getName() : "null"));
+            log.debug("WebRTC offer type={}", offerObj != null ? offerObj.getClass().getName() : "null");
 
             // Offer'ı diğer kullanıcıya ilet
             Map<String, Object> offerData = new HashMap<>();
             offerData.put("offer", offerObj);
             offerData.put("from", userId);
 
-            System.out.println("Sending offer to room: " + roomId);
+            log.debug("Forwarding WebRTC offer to roomId={}", roomId);
             socketIOServer.getRoomOperations(roomId).sendEvent("webrtc_offer", offerData);
-            System.out.println("Offer sent to room: " + roomId);
+            log.info("WebRTC offer forwarded to roomId={}", roomId);
         });
 
         // WebRTC answer event listener
         socketIOServer.addEventListener("webrtc_answer", Map.class, (client, data, ackRequest) -> {
-            System.out.println("=== WebRTC ANSWER EVENT RECEIVED ===");
-            System.out.println("Raw data: " + data);
+            log.info("WebRTC answer event received: payload={}", data);
 
             String roomId = (String) data.get("roomId");
             String userId = client.get("userId");
 
-            System.out.println("WebRTC answer received from " + userId + " in room " + roomId);
+            log.info("WebRTC answer received: userId={}, roomId={}", userId, roomId);
 
             Object answerObj = data.get("answer");
-            System.out.println("Answer object: " + answerObj);
+            log.debug("WebRTC answer type={}", answerObj != null ? answerObj.getClass().getName() : "null");
 
             // Answer'ı diğer kullanıcıya ilet
             Map<String, Object> answerData = new HashMap<>();
             answerData.put("answer", answerObj);
             answerData.put("from", userId);
 
-            System.out.println("Sending answer to room: " + roomId);
+            log.debug("Forwarding WebRTC answer to roomId={}", roomId);
             socketIOServer.getRoomOperations(roomId).sendEvent("webrtc_answer", answerData);
-            System.out.println("Answer sent to room: " + roomId);
+            log.info("WebRTC answer forwarded to roomId={}", roomId);
         });
 
         // WebRTC ICE candidate event listener
@@ -236,15 +232,15 @@ public class MatchmakingController {
 
                 // Diğer kullanıcıya bildir
                 socketIOServer.getRoomOperations(roomId).sendEvent("call_ended");
-                System.out.println("Call ended by user " + userId + " in room " + roomId);
+                log.info("Call ended by userId={} in roomId={}", userId, roomId);
             }
         });
 
         try {
             socketIOServer.start();
-            System.out.println("Socket.IO server started on port 9092");
+            log.info("Socket.IO server started on port 9092");
         } catch (Exception e) {
-            System.err.println("Failed to start Socket.IO server: " + e.getMessage());
+            log.error("Failed to start Socket.IO server", e);
         }
     }
 
