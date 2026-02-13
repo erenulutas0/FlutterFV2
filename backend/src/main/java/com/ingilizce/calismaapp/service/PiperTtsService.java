@@ -60,9 +60,8 @@ public class PiperTtsService {
             Path outputPath = createTempOutputPath();
             String outputFile = outputPath.toString();
 
-            // Build Piper command - use absolute path for model file
-            File modelFileObj = new File(modelFile);
-            String absoluteModelPath = modelFileObj.getAbsolutePath();
+            // Build Piper command - keep path resolution overridable for tests
+            String absoluteModelPath = absolutePath(modelFile);
 
             // Verify model file exists
             if (!pathExists(absoluteModelPath)) {
@@ -75,7 +74,7 @@ public class PiperTtsService {
             log.debug("Using Piper path: {}", piperPath);
 
             // Working directory setup moved here
-            File workingDir = new File(MODEL_BASE_DIR);
+            File workingDir = new File(getModelBaseDir());
 
             List<String> command = new ArrayList<>();
             command.add(piperPath);

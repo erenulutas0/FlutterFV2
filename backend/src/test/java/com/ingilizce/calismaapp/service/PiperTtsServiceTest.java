@@ -377,12 +377,22 @@ class PiperTtsServiceTest {
 
         @Override
         protected boolean pathExists(String path) {
-            return existingPaths.getOrDefault(path, false);
+            String normalized = normalizeTestPath(path);
+            return existingPaths.entrySet().stream()
+                    .filter(e -> normalizeTestPath(e.getKey()).equals(normalized))
+                    .map(Map.Entry::getValue)
+                    .findFirst()
+                    .orElse(false);
         }
 
         @Override
         protected boolean pathCanExecute(String path) {
-            return executablePaths.getOrDefault(path, false);
+            String normalized = normalizeTestPath(path);
+            return executablePaths.entrySet().stream()
+                    .filter(e -> normalizeTestPath(e.getKey()).equals(normalized))
+                    .map(Map.Entry::getValue)
+                    .findFirst()
+                    .orElse(false);
         }
 
         @Override
@@ -393,6 +403,10 @@ class PiperTtsServiceTest {
         @Override
         protected boolean isWindows() {
             return false;
+        }
+
+        private String normalizeTestPath(String path) {
+            return path.replace('\\', '/');
         }
 
         @Override
