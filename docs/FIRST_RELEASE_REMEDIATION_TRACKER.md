@@ -375,6 +375,219 @@ Date: 2026-02-12
     - Runtime check `GET /api/tts/status` -> `{"available":false,"voices":["default","amy"]}`
     Interpretation:
     - Single-model fallback logic and test gates are healthy, but Docker runtime still needs a runnable Piper binary path in-container.
+
+42. Started security phase with production CORS whitelist hardening.
+    Files:
+    - `backend/src/main/java/com/ingilizce/calismaapp/config/CorsConfig.java`
+    - `backend/src/main/java/com/ingilizce/calismaapp/config/CorsProperties.java`
+    - `backend/src/main/resources/application-prod.properties`
+    - `docker-compose.prod.yml`
+    - `scripts/validate-prod-alert-routing.ps1`
+    - `docs/PROD_ROLLOUT_SECRET_AND_VERIFY_CHECKLIST.md`
+    - `backend/src/test/java/com/ingilizce/calismaapp/config/CorsConfigTest.java`
+    - `backend/src/test/java/com/ingilizce/calismaapp/config/CorsPropertiesTest.java`
+    Behavior:
+    - Added `app.cors.strict-origin-validation` guard to reject wildcard, loopback, empty, unresolved placeholder, and non-http(s) origins when strict mode is enabled.
+    - Production profile now enables strict CORS validation and binds `app.cors.allowed-origins` to `APP_CORS_ALLOWED_ORIGINS`.
+    - Production compose now requires `APP_CORS_ALLOWED_ORIGINS` (`:?` contract) for fail-fast startup safety.
+    - Prod preflight script and rollout checklist were updated from 9 to 10 required environment variables.
+    Validation:
+    - `mvn -q "-Dtest=CorsConfigTest,CorsPropertiesTest" test` -> `PASS`
+    - `pwsh -File scripts/verify-rollout.ps1 -Mode prod-preflight` (all required env set, including `APP_CORS_ALLOWED_ORIGINS`) -> `PASS`
+    - `pwsh -File scripts/verify-rollout.ps1 -Mode local-gate -ProjectName flutter-project-main` -> `PASS`
+    - Coverage gate -> `PASS` (`98.21%`, `2246/2287`, classes=`58`)
+    - DB parity -> `PASS`
+
+43. Added production security headers hardening filter (HTTP response headers baseline).
+    Files:
+    - `backend/src/main/java/com/ingilizce/calismaapp/config/SecurityHeadersProperties.java`
+    - `backend/src/main/java/com/ingilizce/calismaapp/config/SecurityHeadersFilter.java`
+    - `backend/src/main/java/com/ingilizce/calismaapp/config/SecurityHeadersConfig.java`
+    - `backend/src/main/resources/application-prod.properties`
+    - `backend/src/test/java/com/ingilizce/calismaapp/config/SecurityHeadersPropertiesTest.java`
+    - `backend/src/test/java/com/ingilizce/calismaapp/config/SecurityHeadersFilterTest.java`
+    Behavior:
+    - Added centralized filter that can emit:
+      - `X-Content-Type-Options: nosniff`
+      - `X-Frame-Options: DENY`
+      - `Referrer-Policy`
+      - `Permissions-Policy`
+      - `Content-Security-Policy`
+      - `Strict-Transport-Security` (only for secure / forwarded-https requests)
+    - Feature is controlled by `app.security.headers.*`; enabled in prod profile.
+    Validation:
+    - `mvn -q "-Dtest=CorsConfigTest,CorsPropertiesTest,SecurityHeadersFilterTest,SecurityHeadersPropertiesTest" test` -> `PASS`
+    - `pwsh -File scripts/verify-rollout.ps1 -Mode local-gate -ProjectName flutter-project-main` -> `PASS`
+    - Coverage gate -> `PASS` (`98.26%`, `2310/2351`, classes=`61`)
+    - DB parity -> `PASS`
+
+44. Added auth brute-force protection (rate-limit) for login/register endpoints.
+    Files:
+    - `backend/src/main/java/com/ingilizce/calismaapp/config/AuthRateLimitProperties.java`
+    - `backend/src/main/java/com/ingilizce/calismaapp/service/AuthRateLimitService.java`
+    - `backend/src/main/java/com/ingilizce/calismaapp/controller/AuthController.java`
+    - `backend/src/main/resources/application.properties`
+    - `backend/src/main/resources/application-docker.properties`
+    - `backend/src/main/resources/application-prod.properties`
+    - `backend/src/test/java/com/ingilizce/calismaapp/controller/AuthControllerUnitTest.java`
+    - `backend/src/test/java/com/ingilizce/calismaapp/service/AuthRateLimitServiceTest.java`
+    - `backend/src/test/java/com/ingilizce/calismaapp/config/AuthRateLimitPropertiesTest.java`
+    Behavior:
+    - `POST /api/auth/login` now enforces combined principal+IP throttling and returns `429` + `Retry-After` on block.
+    - `POST /api/auth/register` now enforces IP throttling and returns `429` + `Retry-After` on block.
+    - Failed auth attempts are counted; successful auth resets relevant counters.
+    - Added configurable knobs under `app.security.auth-rate-limit.*` with stricter production defaults.
+    Validation:
+    - `mvn -q "-Dtest=AuthControllerUnitTest,AuthRateLimitServiceTest,AuthRateLimitPropertiesTest" test` -> `PASS`
+    - `pwsh -File scripts/verify-rollout.ps1 -Mode local-gate -ProjectName flutter-project-main` -> `PASS`
+    - `pwsh -File scripts/verify-rollout.ps1 -Mode prod-preflight` -> `PASS`
+    - Coverage gate -> `PASS` (`97.73%`, `2449/2506`, classes=`65`)
+    - DB parity -> `PASS`
+
+45. Added CI vulnerability scanning workflow for dependency and filesystem CVEs.
+    Files:
+    - `.github/workflows/security-scan.yml`
+    Behavior:
+    - Pull requests now run `actions/dependency-review-action` (fails on high+ severity dependency risks).
+    - Push/PR now run Trivy filesystem scan (`HIGH,CRITICAL`) and publish SARIF to GitHub Security tab.
+    Validation:
+    - YAML added and committed to workflow directory.
+    - Local release gate rerun after workflow addition:
+      - `pwsh -File scripts/verify-rollout.ps1 -Mode local-gate -ProjectName flutter-project-main` -> `PASS`
+      - Coverage gate -> `PASS` (`97.73%`, `2449/2506`, classes=`65`)
+      - DB parity -> `PASS`
+    - `pwsh -File scripts/verify-rollout.ps1 -Mode prod-preflight` -> `PASS`
+    Notes:
+    - Workflow runtime result will be visible on next GitHub `push`/`pull_request` execution.
+
+46. Migrated auth rate-limit enforcement to Redis-backed state with safe local fallback.
+    Files:
+    - `backend/src/main/java/com/ingilizce/calismaapp/service/AuthRateLimitService.java`
+    - `backend/src/main/java/com/ingilizce/calismaapp/config/AuthRateLimitProperties.java`
+    - `backend/src/main/resources/application.properties`
+    - `backend/src/main/resources/application-docker.properties`
+    - `backend/src/main/resources/application-prod.properties`
+    - `backend/src/test/java/com/ingilizce/calismaapp/service/AuthRateLimitServiceRedisTest.java`
+    - `backend/src/test/java/com/ingilizce/calismaapp/service/AuthRateLimitServiceTest.java`
+    - `backend/src/test/java/com/ingilizce/calismaapp/config/AuthRateLimitPropertiesTest.java`
+    Behavior:
+    - Auth throttling now uses Redis keyspace (`auth:rl:cnt:*`, `auth:rl:block:*`) for distributed consistency across replicas.
+    - Added `app.security.auth-rate-limit.redis-enabled` toggle (default `true`).
+    - If Redis rate-limit path fails at runtime, service degrades to existing in-memory guard and logs one-time warning until recovery.
+    Validation:
+    - `mvn -q "-Dtest=AuthControllerUnitTest,AuthRateLimitServiceTest,AuthRateLimitServiceRedisTest,AuthRateLimitPropertiesTest" test` -> `PASS`
+    - `pwsh -File scripts/verify-rollout.ps1 -Mode local-gate -ProjectName flutter-project-main` -> `PASS`
+    - `pwsh -File scripts/verify-rollout.ps1 -Mode prod-preflight` -> `PASS`
+    - Coverage gate -> `PASS` (`96.76%`, `2510/2594`, classes=`65`)
+    - DB parity -> `PASS`
+
+47. Added observability + alerting for auth rate-limit Redis fallback mode.
+    Files:
+    - `backend/src/main/java/com/ingilizce/calismaapp/service/AuthRateLimitService.java`
+    - `backend/src/test/java/com/ingilizce/calismaapp/service/AuthRateLimitServiceRedisTest.java`
+    - `monitoring/prometheus/alerts/cache-alerts.yml`
+    Behavior:
+    - Added Redis fallback observability metrics:
+      - `auth.rate.limit.redis.fallback.active` (gauge, `1` while Redis path is degraded to local fallback)
+      - `auth.rate.limit.redis.failure.total{operation=*}` (counter)
+      - `auth.rate.limit.redis.fallback.transition.total{state=activated|recovered}` (counter)
+    - Added Prometheus alerts:
+      - `AuthRateLimitRedisFallbackActive` (`critical`, fallback active for `2m+`)
+      - `AuthRateLimitRedisFailuresDetected` (`warning`, `>=3` failures in `5m`)
+    Validation:
+    - `mvn -q "-Dtest=AuthRateLimitServiceTest,AuthRateLimitServiceRedisTest" test` -> `PASS`
+    - `docker run --rm --entrypoint /bin/promtool -v C:/flutter-project-main/monitoring/prometheus:/etc/prometheus prom/prometheus:v2.53.1 check config /etc/prometheus/prometheus.yml` -> `PASS`
+
+48. Closed Dockerized Piper runtime executable gap for backend containers.
+    Files:
+    - `backend/Dockerfile`
+    - `backend/src/main/resources/application-docker.properties`
+    - `docker-compose.yml`
+    - `docker-compose.prod.yml`
+    Behavior:
+    - Backend runtime image now installs Linux Piper binary during Docker build (`/opt/piper/piper`).
+    - Docker profile now defaults `piper.tts.path` to `/opt/piper/piper` (can still be overridden via `PIPER_TTS_PATH`).
+    - Compose backend environment now wires `PIPER_TTS_PATH` and `PIPER_TTS_DEFAULT_MODEL` explicitly.
+    - Piper model bind mount became host-path configurable via `PIPER_MODEL_HOST_PATH` (default remains `C:/piper`).
+    Validation:
+    - `docker compose -f docker-compose.yml config` -> `PASS`
+    - `docker compose -f docker-compose.yml -f docker-compose.monitoring.yml -f docker-compose.prod.yml config` (required env set) -> `PASS`
+    - `docker build -f backend/Dockerfile backend -t flutter-project-main-backend:piper-check` -> `PASS`
+    - `docker run --rm --entrypoint /opt/piper/piper flutter-project-main-backend:piper-check --version` -> `PASS` (`1.2.0`)
+    - `mvn -q "-Dtest=PiperTtsServiceTest,TtsControllerTest" test` -> `BLOCKED` in sandbox (`repo.maven.apache.org` network denied)
+
+49. Added staging smoke automation for security headers + strict CORS behavior.
+    Files:
+    - `scripts/smoke-security-cors-headers.ps1`
+    - `scripts/verify-rollout.ps1`
+    - `docs/PROD_ROLLOUT_SECRET_AND_VERIFY_CHECKLIST.md`
+    Behavior:
+    - New script validates:
+      - Allowed-origin CORS preflight (`Access-Control-Allow-Origin`/`Credentials`)
+      - Disallowed-origin preflight rejection behavior
+      - Security headers baseline (`nosniff`, `DENY`, `Referrer-Policy`, `Permissions-Policy`, `CSP`, `HSTS`)
+    - `verify-rollout.ps1 -Mode nonprod-smoke` now supports optional `-SecuritySmokeAllowedOrigin` to run this check in the same batch.
+    Validation:
+    - PowerShell parser check for both scripts -> `PASS`
+      - `scripts/smoke-security-cors-headers.ps1`
+      - `scripts/verify-rollout.ps1`
+
+50. Executed live staging-like security smoke on isolated prod-profile compose stack.
+    Validation:
+    - `docker compose -p flutter-project-main-stage-smoke -f docker-compose.yml -f docker-compose.monitoring.yml -f docker-compose.prod.yml up -d --build postgres redis backend` -> `PASS`
+    - `pwsh -File scripts/smoke-security-cors-headers.ps1 -BaseUrl http://localhost:18082 -AllowedOrigin https://staging.example.com -DisallowedOrigin https://evil.example.com` -> `PASS`
+      - allowed-origin preflight -> `200`
+      - disallowed-origin preflight -> `403`
+      - security headers probe (`nosniff`, `DENY`, `Referrer-Policy`, `Permissions-Policy`, `CSP`, `HSTS`) -> `200` + expected headers
+    - `docker run --rm --entrypoint /opt/piper/piper flutter-project-main-backend:piper-check --version` -> `PASS` (`1.2.0`)
+    - `docker compose ... down` (`flutter-project-main-stage-smoke`) -> `PASS`
+
+51. Made auth rate-limit Redis outage policy configurable (fail-open/fail-closed).
+    Files:
+    - `backend/src/main/java/com/ingilizce/calismaapp/config/AuthRateLimitProperties.java`
+    - `backend/src/main/java/com/ingilizce/calismaapp/service/AuthRateLimitService.java`
+    - `backend/src/main/resources/application.properties`
+    - `backend/src/main/resources/application-docker.properties`
+    - `backend/src/main/resources/application-prod.properties`
+    - `backend/src/test/java/com/ingilizce/calismaapp/config/AuthRateLimitPropertiesTest.java`
+    - `backend/src/test/java/com/ingilizce/calismaapp/service/AuthRateLimitServiceRedisTest.java`
+    - `docker-compose.yml`
+    - `docker-compose.prod.yml`
+    - `monitoring/prometheus/alerts/cache-alerts.yml`
+    Behavior:
+    - New policy knobs:
+      - `app.security.auth-rate-limit.redis-fallback-mode=memory|deny`
+      - `app.security.auth-rate-limit.redis-failure-block-seconds`
+    - Default remains availability-first (`memory`) to preserve current behavior.
+    - `deny` mode enforces fail-closed behavior during Redis degradation and emits:
+      - `auth.rate.limit.redis.fail.closed.block.total{operation=*}`
+    - Added alert:
+      - `AuthRateLimitFailClosedBlocking` (`critical`, any fail-closed block activity in 5m window)
+    Validation:
+    - `docker run --rm -v C:/flutter-project-main/backend:/app -w /app maven:3.9.6-eclipse-temurin-17-alpine mvn -q "-Dtest=AuthRateLimitServiceTest,AuthRateLimitServiceRedisTest,AuthRateLimitPropertiesTest,AuthControllerUnitTest" test` -> `PASS`
+    - `docker compose -f docker-compose.yml config` -> `PASS`
+    - `docker compose -f docker-compose.yml -f docker-compose.monitoring.yml -f docker-compose.prod.yml config` (required env set) -> `PASS`
+    - `docker run --rm --entrypoint /bin/promtool -v C:/flutter-project-main/monitoring/prometheus:/etc/prometheus prom/prometheus:v2.53.1 check config /etc/prometheus/prometheus.yml` -> `PASS`
+
+52. Completed local vulnerability triage/remediation pass for HIGH/CRITICAL findings.
+    Files:
+    - `backend/pom.xml`
+    Behavior:
+    - Upgraded security-relevant dependency baseline:
+      - Spring Boot parent `3.2.1` -> `3.4.5`
+      - `spring-framework.version=6.2.11`
+      - `tomcat.version=10.1.45`
+      - `postgresql.version=42.7.2`
+    Validation:
+    - Local Trivy scan (initial): `17` findings (`HIGH=15`, `CRITICAL=2`)
+      - `docker run --rm -v C:/flutter-project-main:/workspace aquasec/trivy:0.58.1 fs --severity HIGH,CRITICAL --ignore-unfixed --no-progress /workspace`
+    - Local Trivy scan (after remediation): no HIGH/CRITICAL findings (`exit-code` stayed `0` with `--exit-code 1`)
+      - `docker run --rm -v C:/flutter-project-main:/workspace aquasec/trivy:0.58.1 fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --no-progress --exit-code 1 /workspace`
+    - Targeted auth/security regression:
+      - `docker run --rm -v C:/flutter-project-main/backend:/app -w /app maven:3.9.6-eclipse-temurin-17-alpine mvn -q "-Dtest=AuthRateLimitServiceTest,AuthRateLimitServiceRedisTest,AuthRateLimitPropertiesTest,AuthControllerUnitTest" test` -> `PASS`
+    - Backend image build after dependency updates:
+      - `docker build -f backend/Dockerfile backend -t flutter-project-main-backend:security-refresh` -> `PASS`
+
 ## New Findings During Implementation
 
 1. `P2` Persistent non-prod rollout still requires host-by-host execution.
@@ -393,20 +606,57 @@ Date: 2026-02-12
    Next action:
    - Populate `ALERTMANAGER_*_WEBHOOK_URL` in production secret manager and record the final destination contract.
 
-3. `P2` Dockerized TTS runtime still unavailable.
+3. `P2` Dockerized TTS model mount remains environment-specific.
    Evidence:
-   - `GET /api/tts/status` returns `available=false` while dynamic voices are reported.
-   - Backend logs indicate `Cannot run program "piper": error=2` in container.
+   - Backend image now includes Linux Piper executable, but model files are still expected from bind mount (`/piper`).
+   - Compose default host path is Windows-specific (`C:/piper`) unless `PIPER_MODEL_HOST_PATH` override is provided.
    Impact:
-   - TTS endpoint remains unavailable in current Docker runtime despite model selection improvements.
+   - Non-Windows or CI hosts can still report `available=false` unless a valid model directory is mounted.
    Next action:
-   - Either package a Linux Piper binary into backend image and set `PIPER_TTS_PATH`, or run backend on host with Windows Piper executable.
+   - Set `PIPER_MODEL_HOST_PATH` per environment and verify `GET /api/tts/status` returns `available=true`.
+
+4. `P2` Production rollout now has an extra required env var for CORS whitelist.
+   Evidence:
+   - `docker-compose.prod.yml` and `validate-prod-alert-routing.ps1` now enforce `APP_CORS_ALLOWED_ORIGINS`.
+   Impact:
+   - Existing prod/stage pipelines that do not inject this variable will fail fast at preflight/render time.
+   Next action:
+   - Add `APP_CORS_ALLOWED_ORIGINS` to all production/stage secret stores and deployment manifests.
+
+5. `P2` Security headers are profile-driven and currently active on prod profile only.
+   Evidence:
+   - `app.security.headers.enabled=true` is defined in `application-prod.properties`.
+   Impact:
+   - Non-prod runs won't automatically reflect these headers unless profile/env enables them.
+   Next action:
+   - Enable headers in staging for browser-level pre-prod validation before production rollout.
+
+6. `P3` GitHub-hosted vulnerability workflow result is still pending.
+   Evidence:
+   - Local equivalent Trivy scan is now clean for HIGH/CRITICAL, but the GitHub Actions run has not yet executed for this commit set.
+   Impact:
+   - Remote policy gates (dependency-review + SARIF upload + repository security policies) are not yet confirmed.
+   Next action:
+   - Push current branch and validate `security-scan` workflow result matches local clean baseline.
+
+7. `P2` Auth rate-limit fallback mode rollout is pending per environment.
+   Evidence:
+   - Runtime now supports both `memory` (fail-open) and `deny` (fail-closed) via config.
+   - Compose defaults remain `memory`; environment-specific override has not yet been applied.
+   Impact:
+   - Policy is codified but final enforcement posture is not yet rolled out per environment.
+   Next action:
+   - Set `APP_SECURITY_AUTH_RATE_LIMIT_REDIS_FALLBACK_MODE` and `APP_SECURITY_AUTH_RATE_LIMIT_REDIS_FAILURE_BLOCK_SECONDS` per environment and document rationale.
 
 ## Ordered Next Steps
 
 1. Execute `scripts/reconcile-all-nonprod.ps1` on each persistent non-prod host with explicit project list and record results.
 2. Run `pwsh -File scripts/verify-rollout.ps1 -Mode nonprod-smoke -ProjectName <project> -BackendBaseUrl <backend-url>` on each non-prod environment and record output.
 3. Populate `ALERTMANAGER_*_WEBHOOK_URL` secrets in each production environment, then run `pwsh -File scripts/verify-rollout.ps1 -Mode prod-preflight`.
-4. Close Docker Piper runtime gap (`PIPER_TTS_PATH` + executable availability) and re-check `GET /api/tts/status` for `available=true`.
-5. Keep all subsequent schema fixes forward-only (`V011+`) to avoid new checksum drift.
+4. Set `PIPER_MODEL_HOST_PATH` in each non-prod/prod host and verify `GET /api/tts/status` reports `available=true`.
+5. Roll out `APP_CORS_ALLOWED_ORIGINS` into production/stage secret management and verify `prod-preflight` end-to-end.
+6. Enable and validate security headers in staging (`docker,prod` profile or explicit env overrides), then verify browser/API compatibility.
+7. Execute and review `security-scan` GitHub CI results and confirm parity with local clean Trivy baseline.
+8. Roll out environment-specific auth fallback mode (`memory`/`deny`) and verify alert behavior.
+9. Keep all subsequent schema fixes forward-only (`V011+`) to avoid new checksum drift.
 

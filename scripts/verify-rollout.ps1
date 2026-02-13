@@ -2,7 +2,8 @@ param(
     [ValidateSet("prod-preflight", "nonprod-smoke", "local-gate", "full")]
     [string]$Mode = "full",
     [string]$ProjectName = "flutter-project-main",
-    [string]$BackendBaseUrl = "http://localhost:8082"
+    [string]$BackendBaseUrl = "http://localhost:8082",
+    [string]$SecuritySmokeAllowedOrigin = ""
 )
 
 Set-StrictMode -Version Latest
@@ -12,6 +13,7 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $validateProdScript = Join-Path $PSScriptRoot "validate-prod-alert-routing.ps1"
 $reconcileAllScript = Join-Path $PSScriptRoot "reconcile-all-nonprod.ps1"
 $loadSmokeScript = Join-Path $PSScriptRoot "run-http-load-smoke.ps1"
+$securitySmokeScript = Join-Path $PSScriptRoot "smoke-security-cors-headers.ps1"
 $coverageScript = Join-Path $PSScriptRoot "check-core-coverage.ps1"
 $parityScript = Join-Path $PSScriptRoot "check-db-parity.ps1"
 $backendDir = Join-Path $repoRoot "backend"
@@ -47,6 +49,14 @@ function Run-NonProdSmoke {
 
     Invoke-Step -Name "load-smoke progress" -Action {
         & $loadSmokeScript -Uri "$BackendBaseUrl/api/progress/stats" -TotalRequests 1000 -Concurrency 30 -HeadersJson '{"X-User-Id":"1"}'
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($SecuritySmokeAllowedOrigin)) {
+        Invoke-Step -Name "security-cors-headers-smoke" -Action {
+            & $securitySmokeScript -BaseUrl $BackendBaseUrl -AllowedOrigin $SecuritySmokeAllowedOrigin
+        }
+    } else {
+        Write-Host "[verify-rollout] SKIP: security-cors-headers-smoke (SecuritySmokeAllowedOrigin not provided)"
     }
 }
 

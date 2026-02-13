@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>3.2.1</version>
+		<version>3.4.5</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.ingilizce</groupId>
@@ -17,6 +17,9 @@
 		<java.version>17</java.version>
 		<testcontainers.version>1.21.3</testcontainers.version>
 		<docker.api.version>1.44</docker.api.version>
+		<postgresql.version>42.7.2</postgresql.version>
+		<tomcat.version>10.1.45</tomcat.version>
+		<spring-framework.version>6.2.11</spring-framework.version>
 	</properties>
 	<dependencies>
 		<dependency>

@@ -10,6 +10,7 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $requiredVars = @(
     "POSTGRES_PASSWORD",
     "SPRING_DATA_REDIS_PASSWORD",
+    "APP_CORS_ALLOWED_ORIGINS",
     "IYZICO_API_KEY",
     "IYZICO_API_SECRET",
     "IYZICO_API_BASE_URL",

@@ -3,6 +3,8 @@ package com.ingilizce.calismaapp.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ingilizce.calismaapp.entity.User;
 import com.ingilizce.calismaapp.repository.UserRepository;
+import com.ingilizce.calismaapp.service.AuthRateLimitService;
+import com.ingilizce.calismaapp.service.AuthRateLimitService.RateLimitDecision;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -28,13 +30,19 @@ class AuthControllerUnitTest {
 
     private MockMvc mockMvc;
     private UserRepository userRepository;
+    private AuthRateLimitService authRateLimitService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeEach
     void setUp() {
         AuthController controller = new AuthController();
         userRepository = mock(UserRepository.class);
+        authRateLimitService = mock(AuthRateLimitService.class);
+        when(authRateLimitService.checkRegister(anyString())).thenReturn(RateLimitDecision.allowed());
+        when(authRateLimitService.checkLogin(anyString(), anyString())).thenReturn(RateLimitDecision.allowed());
+
         ReflectionTestUtils.setField(controller, "userRepository", userRepository);
+        ReflectionTestUtils.setField(controller, "authRateLimitService", authRateLimitService);
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 
@@ -45,6 +53,22 @@ class AuthControllerUnitTest {
                         .content(objectMapper.writeValueAsString(Map.of("email", "a@test.com"))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("Email and password required"));
+    }
+
+    @Test
+    void register_ShouldReturnTooManyRequests_WhenRateLimited() throws Exception {
+        when(authRateLimitService.checkRegister(anyString())).thenReturn(RateLimitDecision.blocked(120));
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "email", "a@test.com",
+                                "password", "pass123"))))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.retryAfterSeconds").value(120));
+
+        verify(userRepository, never()).existsByEmail(anyString());
     }
 
     @Test
@@ -75,6 +99,22 @@ class AuthControllerUnitTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.error").value("Invalid credentials"));
+    }
+
+    @Test
+    void login_ShouldReturnTooManyRequests_WhenRateLimited() throws Exception {
+        when(authRateLimitService.checkLogin(anyString(), anyString())).thenReturn(RateLimitDecision.blocked(60));
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "email", "blocked@test.com",
+                                "password", "pass123"))))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.retryAfterSeconds").value(60));
+
+        verify(userRepository, never()).findByEmail(anyString());
     }
 
     @Test

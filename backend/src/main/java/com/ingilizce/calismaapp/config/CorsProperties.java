@@ -15,6 +15,7 @@ public class CorsProperties {
     private List<String> allowedMethods = new ArrayList<>(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
     private List<String> allowedHeaders = new ArrayList<>(List.of("*"));
     private boolean allowCredentials = true;
+    private boolean strictOriginValidation = false;
 
     public List<String> getAllowedOrigins() {
         return allowedOrigins;
@@ -46,5 +47,13 @@ public class CorsProperties {
 
     public void setAllowCredentials(boolean allowCredentials) {
         this.allowCredentials = allowCredentials;
+    }
+
+    public boolean isStrictOriginValidation() {
+        return strictOriginValidation;
+    }
+
+    public void setStrictOriginValidation(boolean strictOriginValidation) {
+        this.strictOriginValidation = strictOriginValidation;
     }
 }

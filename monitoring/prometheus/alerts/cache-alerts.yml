@@ -71,3 +71,35 @@ groups:
         annotations:
           summary: "Chatbot cache lookup latency is high"
           description: "Average lookup latency is {{ $value | printf \"%.3f\" }}s over the last 5m (threshold 0.80s)."
+
+  - name: auth-rate-limit-observability
+    rules:
+      - alert: AuthRateLimitRedisFallbackActive
+        expr: max(auth_rate_limit_redis_fallback_active) > 0
+        for: 2m
+        labels:
+          severity: critical
+          component: auth-rate-limit
+        annotations:
+          summary: "Auth rate-limit is running in Redis fallback mode"
+          description: "Redis-backed auth throttling is degraded to in-memory fallback for more than 2m."
+
+      - alert: AuthRateLimitRedisFailuresDetected
+        expr: sum(increase(auth_rate_limit_redis_failure_total[5m])) >= 3
+        for: 0m
+        labels:
+          severity: warning
+          component: auth-rate-limit
+        annotations:
+          summary: "Auth rate-limit Redis failures detected"
+          description: "Auth rate-limit Redis operations failed {{ $value | printf \"%.0f\" }} times in the last 5m."
+
+      - alert: AuthRateLimitFailClosedBlocking
+        expr: sum(increase(auth_rate_limit_redis_fail_closed_block_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: auth-rate-limit
+        annotations:
+          summary: "Auth rate-limit fail-closed mode is actively blocking requests"
+          description: "Fail-closed blocks observed {{ $value | printf \"%.0f\" }} times in the last 5m."

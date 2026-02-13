@@ -1,0 +1,135 @@
+package com.ingilizce.calismaapp.config;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+@Component
+@ConfigurationProperties(prefix = "app.security.auth-rate-limit")
+public class AuthRateLimitProperties {
+
+    private boolean enabled = true;
+    private boolean redisEnabled = true;
+    /**
+     * Redis error policy:
+     * - memory: fallback to local in-memory limiter (availability-first)
+     * - deny: block auth attempts while Redis path is degraded (enforcement-first)
+     */
+    private String redisFallbackMode = "memory";
+    private long redisFailureBlockSeconds = 60;
+
+    private int loginPrincipalMaxAttempts = 8;
+    private long loginPrincipalWindowSeconds = 300;
+    private long loginPrincipalBlockSeconds = 900;
+
+    private int loginIpMaxAttempts = 40;
+    private long loginIpWindowSeconds = 300;
+    private long loginIpBlockSeconds = 900;
+
+    private int registerIpMaxAttempts = 10;
+    private long registerIpWindowSeconds = 600;
+    private long registerIpBlockSeconds = 1800;
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
+    }
+
+    public boolean isRedisEnabled() {
+        return redisEnabled;
+    }
+
+    public void setRedisEnabled(boolean redisEnabled) {
+        this.redisEnabled = redisEnabled;
+    }
+
+    public String getRedisFallbackMode() {
+        return redisFallbackMode;
+    }
+
+    public void setRedisFallbackMode(String redisFallbackMode) {
+        this.redisFallbackMode = redisFallbackMode;
+    }
+
+    public long getRedisFailureBlockSeconds() {
+        return redisFailureBlockSeconds;
+    }
+
+    public void setRedisFailureBlockSeconds(long redisFailureBlockSeconds) {
+        this.redisFailureBlockSeconds = redisFailureBlockSeconds;
+    }
+
+    public int getLoginPrincipalMaxAttempts() {
+        return loginPrincipalMaxAttempts;
+    }
+
+    public void setLoginPrincipalMaxAttempts(int loginPrincipalMaxAttempts) {
+        this.loginPrincipalMaxAttempts = loginPrincipalMaxAttempts;
+    }
+
+    public long getLoginPrincipalWindowSeconds() {
+        return loginPrincipalWindowSeconds;
+    }
+
+    public void setLoginPrincipalWindowSeconds(long loginPrincipalWindowSeconds) {
+        this.loginPrincipalWindowSeconds = loginPrincipalWindowSeconds;
+    }
+
+    public long getLoginPrincipalBlockSeconds() {
+        return loginPrincipalBlockSeconds;
+    }
+
+    public void setLoginPrincipalBlockSeconds(long loginPrincipalBlockSeconds) {
+        this.loginPrincipalBlockSeconds = loginPrincipalBlockSeconds;
+    }
+
+    public int getLoginIpMaxAttempts() {
+        return loginIpMaxAttempts;
+    }
+
+    public void setLoginIpMaxAttempts(int loginIpMaxAttempts) {
+        this.loginIpMaxAttempts = loginIpMaxAttempts;
+    }
+
+    public long getLoginIpWindowSeconds() {
+        return loginIpWindowSeconds;
+    }
+
+    public void setLoginIpWindowSeconds(long loginIpWindowSeconds) {
+        this.loginIpWindowSeconds = loginIpWindowSeconds;
+    }
+
+    public long getLoginIpBlockSeconds() {
+        return loginIpBlockSeconds;
+    }
+
+    public void setLoginIpBlockSeconds(long loginIpBlockSeconds) {
+        this.loginIpBlockSeconds = loginIpBlockSeconds;
+    }
+
+    public int getRegisterIpMaxAttempts() {
+        return registerIpMaxAttempts;
+    }
+
+    public void setRegisterIpMaxAttempts(int registerIpMaxAttempts) {
+        this.registerIpMaxAttempts = registerIpMaxAttempts;
+    }
+
+    public long getRegisterIpWindowSeconds() {
+        return registerIpWindowSeconds;
+    }
+
+    public void setRegisterIpWindowSeconds(long registerIpWindowSeconds) {
+        this.registerIpWindowSeconds = registerIpWindowSeconds;
+    }
+
+    public long getRegisterIpBlockSeconds() {
+        return registerIpBlockSeconds;
+    }
+
+    public void setRegisterIpBlockSeconds(long registerIpBlockSeconds) {
+        this.registerIpBlockSeconds = registerIpBlockSeconds;
+    }
+}

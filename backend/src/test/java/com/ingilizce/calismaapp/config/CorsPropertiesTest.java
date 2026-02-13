@@ -18,6 +18,7 @@ class CorsPropertiesTest {
         assertEquals(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"), properties.getAllowedMethods());
         assertEquals(List.of("*"), properties.getAllowedHeaders());
         assertTrue(properties.isAllowCredentials());
+        assertEquals(false, properties.isStrictOriginValidation());
     }
 
     @Test
@@ -27,10 +28,12 @@ class CorsPropertiesTest {
         properties.setAllowedMethods(List.of("GET"));
         properties.setAllowedHeaders(List.of("Authorization", "Content-Type"));
         properties.setAllowCredentials(false);
+        properties.setStrictOriginValidation(true);
 
         assertEquals(List.of("https://app.example.com"), properties.getAllowedOrigins());
         assertEquals(List.of("GET"), properties.getAllowedMethods());
         assertEquals(List.of("Authorization", "Content-Type"), properties.getAllowedHeaders());
         assertEquals(false, properties.isAllowCredentials());
+        assertEquals(true, properties.isStrictOriginValidation());
     }
 }

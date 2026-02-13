@@ -39,9 +39,12 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        PIPER_TTS_VERSION: ${PIPER_TTS_VERSION:-1.2.0}
+        PIPER_TTS_ARCHIVE: ${PIPER_TTS_ARCHIVE:-piper_amd64.tar.gz}
     volumes:
-      # Mount Piper TTS from host (Windows path to container)
-      - C:/piper:/piper:ro
+      # Mount Piper voice models from host (override PIPER_MODEL_HOST_PATH on non-Windows hosts)
+      - ${PIPER_MODEL_HOST_PATH:-C:/piper}:/piper:ro
     environment:
       # Spring Profile
       SPRING_PROFILES_ACTIVE: docker
@@ -81,9 +84,11 @@ services:
       # Required in production; optional for local stack bring-up and smoke checks.
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       
-      # Piper TTS (external service - must be available on host)
-      # Note: Piper TTS requires Windows/Linux executable, not included in Docker
-      # PIPER_TTS_PATH: /path/to/piper (if available in container)
+      # Piper TTS (binary is installed in backend image; /piper contains mounted voice models)
+      PIPER_TTS_PATH: ${PIPER_TTS_PATH:-/opt/piper/piper}
+      PIPER_TTS_DEFAULT_MODEL: ${PIPER_TTS_DEFAULT_MODEL:-en_US-amy-medium.onnx}
+      APP_SECURITY_AUTH_RATE_LIMIT_REDIS_FALLBACK_MODE: ${APP_SECURITY_AUTH_RATE_LIMIT_REDIS_FALLBACK_MODE:-memory}
+      APP_SECURITY_AUTH_RATE_LIMIT_REDIS_FAILURE_BLOCK_SECONDS: ${APP_SECURITY_AUTH_RATE_LIMIT_REDIS_FAILURE_BLOCK_SECONDS:-60}
       
     ports:
       - "${BACKEND_HTTP_PORT:-8082}:8082"

@@ -59,4 +59,40 @@ class CorsConfigTest {
         assertNotNull(webMvcConfigurer);
         webMvcConfigurer.addCorsMappings(new CorsRegistry());
     }
+
+    @Test
+    void corsConfigurer_ShouldRejectLoopbackOrigins_WhenStrictValidationEnabled() {
+        CorsProperties properties = new CorsProperties();
+        properties.setStrictOriginValidation(true);
+        properties.setAllowedOrigins(List.of("http://localhost:8080"));
+
+        CorsConfig config = new CorsConfig(properties);
+
+        assertThrows(IllegalStateException.class, config::corsConfigurer);
+    }
+
+    @Test
+    void corsConfigurer_ShouldRejectWildcard_WhenStrictValidationEnabled() {
+        CorsProperties properties = new CorsProperties();
+        properties.setStrictOriginValidation(true);
+        properties.setAllowCredentials(false);
+        properties.setAllowedOrigins(List.of("*"));
+
+        CorsConfig config = new CorsConfig(properties);
+
+        assertThrows(IllegalStateException.class, config::corsConfigurer);
+    }
+
+    @Test
+    void corsConfigurer_ShouldAllowExplicitHttpsOrigins_WhenStrictValidationEnabled() {
+        CorsProperties properties = new CorsProperties();
+        properties.setStrictOriginValidation(true);
+        properties.setAllowedOrigins(List.of("https://app.example.com", "https://admin.example.com"));
+
+        CorsConfig config = new CorsConfig(properties);
+        WebMvcConfigurer webMvcConfigurer = config.corsConfigurer();
+
+        assertNotNull(webMvcConfigurer);
+        webMvcConfigurer.addCorsMappings(new CorsRegistry());
+    }
 }

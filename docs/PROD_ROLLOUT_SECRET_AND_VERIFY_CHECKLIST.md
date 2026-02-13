@@ -8,6 +8,7 @@ Minimum required secrets for prod/stage compose rendering and runtime:
 
 - `POSTGRES_PASSWORD`
 - `SPRING_DATA_REDIS_PASSWORD`
+- `APP_CORS_ALLOWED_ORIGINS`
 - `IYZICO_API_KEY`
 - `IYZICO_API_SECRET`
 - `IYZICO_API_BASE_URL`
@@ -22,6 +23,20 @@ Rules:
 - `ALERTMANAGER_*_WEBHOOK_URL` values must point to real environment-specific destinations.
 - Production and stage must use different paging endpoints.
 
+## 1.1) Non-Secret Runtime Vars (TTS)
+
+- `PIPER_MODEL_HOST_PATH`:
+  - Host path that contains Piper `.onnx` model files.
+  - Default in compose is `C:/piper`; set explicitly on non-Windows hosts.
+- `PIPER_TTS_DEFAULT_MODEL`:
+  - Optional override for default voice model file name.
+  - Default: `en_US-amy-medium.onnx`.
+- `APP_SECURITY_AUTH_RATE_LIMIT_REDIS_FALLBACK_MODE`:
+  - Optional auth policy override: `memory` (default) or `deny`.
+- `APP_SECURITY_AUTH_RATE_LIMIT_REDIS_FAILURE_BLOCK_SECONDS`:
+  - Optional retry window for fail-closed mode.
+  - Default: `60`.
+
 ## 2) One-Command Verification Blocks
 
 Run from repository root (`C:\flutter-project-main`).
@@ -34,7 +49,7 @@ pwsh -File .\scripts\verify-rollout.ps1 -Mode prod-preflight
 
 Notes:
 
-- Requires the 9 env vars above to be already exported/injected.
+- Requires the 10 env vars above to be already exported/injected.
 - Fails fast if any required secret is missing.
 
 ### B) Non-Prod Rollout Smoke (Reconcile + Load)
@@ -43,11 +58,27 @@ Notes:
 pwsh -File .\scripts\verify-rollout.ps1 -Mode nonprod-smoke -ProjectName flutter-project-main -BackendBaseUrl http://localhost:8082
 ```
 
+If you want strict staging browser-surface checks in the same run:
+
+```powershell
+pwsh -File .\scripts\verify-rollout.ps1 -Mode nonprod-smoke -ProjectName flutter-project-main -BackendBaseUrl http://localhost:8082 -SecuritySmokeAllowedOrigin https://staging.example.com
+```
+
 What it runs:
 
 - `scripts/reconcile-all-nonprod.ps1`
 - `scripts/run-http-load-smoke.ps1` on `/actuator/health`
 - `scripts/run-http-load-smoke.ps1` on `/api/progress/stats` (`X-User-Id: 1`)
+- Optional: `scripts/smoke-security-cors-headers.ps1` (when `-SecuritySmokeAllowedOrigin` is provided)
+
+Optional TTS runtime check (recommended where TTS is enabled):
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:8082/api/tts/status
+```
+
+Expected:
+- `available=true` and at least one `voices[]` entry.
 
 ### C) Local Release Gate
 
@@ -65,6 +96,12 @@ What it runs:
 
 ```powershell
 pwsh -File .\scripts\verify-rollout.ps1 -Mode full -ProjectName flutter-project-main -BackendBaseUrl http://localhost:8082
+```
+
+### E) Optional Local CVE Gate (Trivy HIGH/CRITICAL)
+
+```powershell
+docker run --rm -v C:/flutter-project-main:/workspace aquasec/trivy:0.58.1 fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --no-progress --exit-code 1 /workspace
 ```
 
 ## 3) Rollout Done Criteria

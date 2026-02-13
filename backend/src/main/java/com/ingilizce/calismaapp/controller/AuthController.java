@@ -2,9 +2,13 @@ package com.ingilizce.calismaapp.controller;
 
 import com.ingilizce.calismaapp.entity.User;
 import com.ingilizce.calismaapp.repository.UserRepository;
+import com.ingilizce.calismaapp.service.AuthRateLimitService;
+import com.ingilizce.calismaapp.service.AuthRateLimitService.RateLimitDecision;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,25 +27,38 @@ public class AuthController {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private AuthRateLimitService authRateLimitService;
+
     @PostMapping("/register")
-    public ResponseEntity<Map<String, Object>> register(@RequestBody Map<String, String> request) {
+    public ResponseEntity<Map<String, Object>> register(@RequestBody Map<String, String> request,
+                                                        HttpServletRequest httpRequest) {
         log.info("Processing registration request for email={}", request.get("email"));
         try {
+            String clientIp = resolveClientIp(httpRequest);
+            RateLimitDecision rateLimitDecision = authRateLimitService.checkRegister(clientIp);
+            if (rateLimitDecision.blocked()) {
+                return tooManyRequests("Too many registration attempts. Please try again later.", rateLimitDecision);
+            }
+
             String email = request.get("email");
             String password = request.get("password");
             String displayName = request.get("displayName");
 
             if (email == null || password == null) {
+                authRateLimitService.recordRegisterFailure(clientIp);
                 return ResponseEntity.badRequest().body(Map.of("error", "Email and password required"));
             }
 
             if (userRepository.existsByEmail(email)) {
+                authRateLimitService.recordRegisterFailure(clientIp);
                 log.warn("Registration rejected: email already exists, email={}", email);
                 return ResponseEntity.badRequest().body(Map.of("error", "Email already in use"));
             }
 
             User user = new User(email, hashPassword(password), displayName);
             User savedUser = userRepository.save(user);
+            authRateLimitService.resetRegister(clientIp);
             log.info("User registered successfully, userId={}", savedUser.getId());
 
             return ResponseEntity.ok(Map.of("success", true, "message", "User registered successfully", "userId",
@@ -54,20 +71,32 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<Map<String, Object>> login(@RequestBody Map<String, String> request) {
+    public ResponseEntity<Map<String, Object>> login(@RequestBody Map<String, String> request,
+                                                     HttpServletRequest httpRequest) {
         log.info("Processing login request for email={}", request.get("emailOrTag"));
         String email = request.get("emailOrTag"); // Frontend sends emailOrTag
         if (email == null)
             email = request.get("email"); // Fallback
 
         try {
+            String clientIp = resolveClientIp(httpRequest);
+            RateLimitDecision rateLimitDecision = authRateLimitService.checkLogin(email, clientIp);
+            if (rateLimitDecision.blocked()) {
+                return tooManyRequests("Too many login attempts. Please try again later.", rateLimitDecision);
+            }
+
             String password = request.get("password");
+            if (email == null || password == null) {
+                authRateLimitService.recordLoginFailure(email, clientIp);
+                return ResponseEntity.badRequest().body(Map.of("error", "Email and password required", "success", false));
+            }
 
             Optional<User> userOpt = userRepository.findByEmail(email);
 
             if (userOpt.isPresent()) {
                 User user = userOpt.get();
                 if (user.getPasswordHash().equals(hashPassword(password))) {
+                    authRateLimitService.resetLogin(email, clientIp);
                     Map<String, Object> response = new HashMap<>();
                     response.put("success", true);
                     response.put("userId", user.getId());
@@ -81,9 +110,11 @@ public class AuthController {
                     log.info("Login successful, userId={}", user.getId());
                     return ResponseEntity.ok(response);
                 } else {
+                    authRateLimitService.recordLoginFailure(email, clientIp);
                     log.warn("Login rejected due to invalid password, email={}", email);
                 }
             } else {
+                authRateLimitService.recordLoginFailure(email, clientIp);
                 log.info("Login rejected: user not found, email={}", email);
             }
 
@@ -162,5 +193,34 @@ public class AuthController {
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException("Error hashing password", e);
         }
+    }
+
+    private String resolveClientIp(HttpServletRequest request) {
+        if (request == null) {
+            return "unknown";
+        }
+
+        String forwardedFor = request.getHeader("X-Forwarded-For");
+        if (forwardedFor != null && !forwardedFor.isBlank()) {
+            String first = forwardedFor.split(",")[0].trim();
+            if (!first.isBlank()) {
+                return first;
+            }
+        }
+
+        String remoteAddr = request.getRemoteAddr();
+        if (remoteAddr == null || remoteAddr.isBlank()) {
+            return "unknown";
+        }
+        return remoteAddr;
+    }
+
+    private ResponseEntity<Map<String, Object>> tooManyRequests(String message, RateLimitDecision decision) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", String.valueOf(decision.retryAfterSeconds()))
+                .body(Map.of(
+                        "error", message,
+                        "success", false,
+                        "retryAfterSeconds", decision.retryAfterSeconds()));
     }
 }

@@ -39,5 +39,26 @@ public class CorsConfig {
         if (corsProperties.isAllowCredentials() && corsProperties.getAllowedOrigins().contains("*")) {
             throw new IllegalStateException("app.cors.allowed-origins cannot contain '*' when allow-credentials=true");
         }
+
+        if (corsProperties.isStrictOriginValidation()) {
+            for (String origin : corsProperties.getAllowedOrigins()) {
+                String normalized = origin == null ? "" : origin.trim().toLowerCase();
+                if (normalized.isEmpty()) {
+                    throw new IllegalStateException("app.cors.allowed-origins cannot contain empty origin when strict validation is enabled");
+                }
+                if (normalized.contains("${")) {
+                    throw new IllegalStateException("app.cors.allowed-origins contains unresolved placeholder in strict mode");
+                }
+                if ("*".equals(normalized)) {
+                    throw new IllegalStateException("app.cors.allowed-origins cannot contain '*' in strict mode");
+                }
+                if (normalized.contains("localhost") || normalized.contains("127.0.0.1") || normalized.contains("0.0.0.0")) {
+                    throw new IllegalStateException("app.cors.allowed-origins must not include loopback origins in strict mode");
+                }
+                if (!(normalized.startsWith("https://") || normalized.startsWith("http://"))) {
+                    throw new IllegalStateException("app.cors.allowed-origins must use http/https scheme in strict mode");
+                }
+            }
+        }
     }
 }
