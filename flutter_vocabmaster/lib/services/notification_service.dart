@@ -8,9 +8,11 @@ class NotificationService {
 
   Future<Map<String, String>> _getHeaders() async {
     final userId = await _authService.getUserId();
+    final token = await _authService.getToken();
     return {
       'Content-Type': 'application/json',
       'X-User-Id': userId.toString(), 
+      if (token != null) 'Authorization': 'Bearer $token',
     };
   }
 

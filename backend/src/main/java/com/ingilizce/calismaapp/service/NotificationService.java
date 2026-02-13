@@ -30,8 +30,8 @@ public class NotificationService {
         return notificationRepository.findByUserOrderByCreatedAtDesc(user);
     }
 
-    public void markAsRead(Long notificationId) {
-        notificationRepository.findById(notificationId).ifPresent(notification -> {
+    public void markAsRead(Long notificationId, Long userId) {
+        notificationRepository.findByIdAndUserId(notificationId, userId).ifPresent(notification -> {
             notification.setRead(true);
             notificationRepository.save(notification);
         });

@@ -2,21 +2,29 @@ package com.ingilizce.calismaapp.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ingilizce.calismaapp.entity.User;
+import com.ingilizce.calismaapp.security.AuthSecurityProperties;
+import com.ingilizce.calismaapp.security.CurrentUserContext;
+import com.ingilizce.calismaapp.security.EmailVerificationService;
+import com.ingilizce.calismaapp.security.JwtTokenService;
+import com.ingilizce.calismaapp.security.PasswordResetService;
+import com.ingilizce.calismaapp.security.RefreshTokenService;
 import com.ingilizce.calismaapp.repository.UserRepository;
 import com.ingilizce.calismaapp.service.AuthRateLimitService;
 import com.ingilizce.calismaapp.service.AuthRateLimitService.RateLimitDecision;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Optional;
 
-import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -31,18 +39,59 @@ class AuthControllerUnitTest {
     private MockMvc mockMvc;
     private UserRepository userRepository;
     private AuthRateLimitService authRateLimitService;
+    private PasswordEncoder passwordEncoder;
+    private JwtTokenService jwtTokenService;
+    private RefreshTokenService refreshTokenService;
+    private CurrentUserContext currentUserContext;
+    private PasswordResetService passwordResetService;
+    private EmailVerificationService emailVerificationService;
+    private AuthSecurityProperties authSecurityProperties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeEach
     void setUp() {
-        AuthController controller = new AuthController();
         userRepository = mock(UserRepository.class);
         authRateLimitService = mock(AuthRateLimitService.class);
+        passwordEncoder = mock(PasswordEncoder.class);
+        jwtTokenService = mock(JwtTokenService.class);
+        refreshTokenService = mock(RefreshTokenService.class);
+        currentUserContext = mock(CurrentUserContext.class);
+        passwordResetService = mock(PasswordResetService.class);
+        emailVerificationService = mock(EmailVerificationService.class);
+        authSecurityProperties = new AuthSecurityProperties();
+        authSecurityProperties.setExposeDebugTokens(true);
         when(authRateLimitService.checkRegister(anyString())).thenReturn(RateLimitDecision.allowed());
         when(authRateLimitService.checkLogin(anyString(), anyString())).thenReturn(RateLimitDecision.allowed());
+        when(authRateLimitService.checkPasswordResetRequest(anyString())).thenReturn(RateLimitDecision.allowed());
+        when(passwordEncoder.encode(anyString())).thenReturn("encoded-password");
+        when(passwordEncoder.matches(anyString(), anyString())).thenReturn(true);
+        when(currentUserContext.getCurrentUserId()).thenReturn(Optional.empty());
 
-        ReflectionTestUtils.setField(controller, "userRepository", userRepository);
-        ReflectionTestUtils.setField(controller, "authRateLimitService", authRateLimitService);
+        when(refreshTokenService.issue(any(User.class), anyBoolean(), anyString(), anyString(), anyString(), any(Instant.class)))
+                .thenReturn(new RefreshTokenService.IssuedRefreshToken(
+                        "rt.session.secret",
+                        "session123",
+                        Instant.now().plusSeconds(3600)));
+        when(emailVerificationService.issue(any(User.class), anyString(), anyString(), any(Instant.class)))
+                .thenReturn(new EmailVerificationService.IssuedVerificationToken(
+                        "evt.token.secret",
+                        Instant.now().plusSeconds(3600)));
+        when(jwtTokenService.issueAccessToken(any(User.class), anyString(), any(Instant.class)))
+                .thenReturn(new JwtTokenService.IssuedAccessToken(
+                        "access-token",
+                        Instant.now().plusSeconds(900),
+                        900L));
+
+        AuthController controller = new AuthController(
+                userRepository,
+                authRateLimitService,
+                passwordEncoder,
+                jwtTokenService,
+                refreshTokenService,
+                currentUserContext,
+                passwordResetService,
+                emailVerificationService,
+                authSecurityProperties);
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 
@@ -84,7 +133,7 @@ class AuthControllerUnitTest {
                                 "displayName", "A User"))))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.success").value(false))
-                .andExpect(jsonPath("$.error", containsString("db down")));
+                .andExpect(jsonPath("$.error").value("Internal server error"));
     }
 
     @Test
@@ -135,6 +184,7 @@ class AuthControllerUnitTest {
     void googleLogin_ShouldNotSave_WhenExistingUserHasCustomDisplayName() throws Exception {
         User user = new User("google@test.com", "hash", "Custom Name");
         user.setId(10L);
+        user.setEmailVerifiedAt(LocalDateTime.now());
         when(userRepository.findByEmail("google@test.com")).thenReturn(Optional.of(user));
 
         mockMvc.perform(post("/api/auth/google-login")
@@ -155,12 +205,12 @@ class AuthControllerUnitTest {
 
         mockMvc.perform(post("/api/auth/google-login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
+                .content(objectMapper.writeValueAsString(Map.of(
                                 "email", "google@test.com",
                                 "displayName", "Name"))))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.success").value(false))
-                .andExpect(jsonPath("$.error", containsString("Google login error")));
+                .andExpect(jsonPath("$.error").value("Google login error"));
     }
 
     @Test
@@ -180,6 +230,35 @@ class AuthControllerUnitTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.userId").value(42))
-                .andExpect(jsonPath("$.email").value("new@test.com"));
+                .andExpect(jsonPath("$.email").value("new@test.com"))
+                .andExpect(jsonPath("$.emailVerified").value(true));
+    }
+
+    @Test
+    void passwordResetRequest_ShouldReturnGenericSuccess() throws Exception {
+        User user = new User("reset@test.com", "hash", "Reset User");
+        user.setId(12L);
+        when(userRepository.findByEmail("reset@test.com")).thenReturn(Optional.of(user));
+        when(passwordResetService.issue(any(User.class), anyString(), anyString(), any(Instant.class)))
+                .thenReturn(new PasswordResetService.IssuedResetToken(
+                        "prt.token.secret",
+                        Instant.now().plusSeconds(600)));
+
+        mockMvc.perform(post("/api/auth/password-reset/request")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("email", "reset@test.com"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.passwordResetToken").value("prt.token.secret"));
+    }
+
+    @Test
+    void emailVerificationConfirm_ShouldReturnBadRequest_WhenTokenMissing() throws Exception {
+        mockMvc.perform(post("/api/auth/email-verification/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error").value("token is required"));
     }
 }

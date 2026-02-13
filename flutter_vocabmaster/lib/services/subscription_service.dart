@@ -257,6 +257,7 @@ class SubscriptionService {
   Future<Map<String, dynamic>> getUserSubscriptionStatus() async {
     final apiUrl = await AppConfig.apiBaseUrl;
     final userId = await _authService.getUserId();
+    final token = await _authService.getToken();
 
     if (userId == null) throw Exception('Kullanıcı ID bulunamadı');
 
@@ -264,6 +265,8 @@ class SubscriptionService {
       Uri.parse('$apiUrl/users/$userId'),
       headers: {
         'Content-Type': 'application/json',
+        'X-User-Id': userId.toString(),
+        if (token != null) 'Authorization': 'Bearer $token',
       },
     );
 

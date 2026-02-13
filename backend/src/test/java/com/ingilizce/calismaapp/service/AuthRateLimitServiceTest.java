@@ -62,6 +62,22 @@ class AuthRateLimitServiceTest {
         assertFalse(service.checkRegister("10.0.0.3").blocked());
     }
 
+    @Test
+    void passwordReset_ShouldBeBlockedByIpAfterConfiguredFailures() {
+        AuthRateLimitProperties properties = new AuthRateLimitProperties();
+        properties.setEnabled(true);
+        properties.setPasswordResetIpMaxAttempts(1);
+        properties.setPasswordResetIpWindowSeconds(600);
+        properties.setPasswordResetIpBlockSeconds(60);
+
+        TestableAuthRateLimitService service = new TestableAuthRateLimitService(properties);
+
+        assertFalse(service.checkPasswordResetRequest("10.0.0.4").blocked());
+        service.recordPasswordResetRequest("10.0.0.4");
+
+        assertTrue(service.checkPasswordResetRequest("10.0.0.4").blocked());
+    }
+
     private static class TestableAuthRateLimitService extends AuthRateLimitService {
         private long nowMs = 1_000_000L;
 

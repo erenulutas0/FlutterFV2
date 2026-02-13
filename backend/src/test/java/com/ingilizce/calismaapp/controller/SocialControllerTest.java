@@ -4,6 +4,8 @@ import com.ingilizce.calismaapp.entity.Post;
 import com.ingilizce.calismaapp.entity.User;
 import com.ingilizce.calismaapp.repository.PostLikeRepository;
 import com.ingilizce.calismaapp.repository.UserRepository;
+import com.ingilizce.calismaapp.security.JwtAuthenticationFilter;
+import com.ingilizce.calismaapp.security.UserHeaderConsistencyFilter;
 import com.ingilizce.calismaapp.service.SocialService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +41,12 @@ class SocialControllerTest {
 
     @MockBean
     private PostLikeRepository postLikeRepository;
+
+    @MockBean
+    private JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    @MockBean
+    private UserHeaderConsistencyFilter userHeaderConsistencyFilter;
 
     @Test
     void getGlobalFeedReturnsBadRequestWhenHeaderMissing() throws Exception {

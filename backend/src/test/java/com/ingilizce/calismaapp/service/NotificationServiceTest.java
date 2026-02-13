@@ -75,9 +75,9 @@ class NotificationServiceTest {
         Notification n = new Notification(user, Notification.NotificationType.MESSAGE, "msg", 7L);
         n.setId(7L);
         n.setRead(false);
-        when(notificationRepository.findById(7L)).thenReturn(Optional.of(n));
+        when(notificationRepository.findByIdAndUserId(7L, 1L)).thenReturn(Optional.of(n));
 
-        notificationService.markAsRead(7L);
+        notificationService.markAsRead(7L, 1L);
 
         assertTrue(n.isRead());
         verify(notificationRepository).save(n);
@@ -85,9 +85,9 @@ class NotificationServiceTest {
 
     @Test
     void markAsRead_ShouldDoNothing_WhenNotificationMissing() {
-        when(notificationRepository.findById(77L)).thenReturn(Optional.empty());
+        when(notificationRepository.findByIdAndUserId(77L, 1L)).thenReturn(Optional.empty());
 
-        notificationService.markAsRead(77L);
+        notificationService.markAsRead(77L, 1L);
 
         verify(notificationRepository, never()).save(any(Notification.class));
     }

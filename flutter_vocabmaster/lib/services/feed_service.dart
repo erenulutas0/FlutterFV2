@@ -35,11 +35,13 @@ class FeedService {
   Future<List<UserActivity>> getFeed({int limit = 20}) async {
     final apiUrl = await AppConfig.apiBaseUrl;
     final userId = await _authService.getUserId();
+    final token = await _authService.getToken();
 
     final response = await http.get(
       Uri.parse('$apiUrl/feed?limit=$limit'),
       headers: {
         'X-User-Id': userId.toString(),
+        if (token != null) 'Authorization': 'Bearer $token',
       },
     );
 

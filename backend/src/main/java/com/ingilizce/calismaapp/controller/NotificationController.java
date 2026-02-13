@@ -36,8 +36,10 @@ public class NotificationController {
     }
 
     @PostMapping("/{id}/read")
-    public ResponseEntity<Void> markAsRead(@PathVariable Long id) {
-        notificationService.markAsRead(id);
+    public ResponseEntity<Void> markAsRead(@PathVariable Long id,
+                                           @RequestHeader("X-User-Id") Long userId) {
+        getUserFromHeader(userId);
+        notificationService.markAsRead(id, userId);
         return ResponseEntity.ok().build();
     }
 }

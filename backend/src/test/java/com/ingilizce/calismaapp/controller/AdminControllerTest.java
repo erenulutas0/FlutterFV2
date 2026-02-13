@@ -4,6 +4,9 @@ import com.ingilizce.calismaapp.repository.SentencePracticeRepository;
 import com.ingilizce.calismaapp.repository.SentenceRepository;
 import com.ingilizce.calismaapp.repository.WordRepository;
 import com.ingilizce.calismaapp.repository.WordReviewRepository;
+import com.ingilizce.calismaapp.security.CurrentUserContext;
+import com.ingilizce.calismaapp.security.JwtAuthenticationFilter;
+import com.ingilizce.calismaapp.security.UserHeaderConsistencyFilter;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -35,6 +38,15 @@ class AdminControllerTest {
 
     @MockBean
     private WordRepository wordRepository;
+
+    @MockBean
+    private CurrentUserContext currentUserContext;
+
+    @MockBean
+    private JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    @MockBean
+    private UserHeaderConsistencyFilter userHeaderConsistencyFilter;
 
     @Test
     void resetData_ShouldDeleteRepositoriesAndReturnSuccessMessage() throws Exception {

@@ -41,9 +41,10 @@ class WordReviewControllerTest {
     void addReviewReturnsOk() throws Exception {
         LocalDate date = LocalDate.of(2026, 2, 10);
         WordReview review = reviewWithId(7L, date);
-        when(wordReviewService.addReview(1L, date, "daily", "note")).thenReturn(review);
+        when(wordReviewService.addReview(1L, 1L, date, "daily", "note")).thenReturn(review);
 
         mockMvc.perform(post("/api/reviews/words/1")
+                .header("X-User-Id", "1")
                 .param("reviewDate", "2026-02-10")
                 .param("reviewType", "daily")
                 .param("notes", "note"))
@@ -55,10 +56,11 @@ class WordReviewControllerTest {
     @Test
     void addReviewReturnsBadRequestWhenServiceThrows() throws Exception {
         LocalDate date = LocalDate.of(2026, 2, 10);
-        when(wordReviewService.addReview(1L, date, "daily", "note"))
+        when(wordReviewService.addReview(1L, 1L, date, "daily", "note"))
                 .thenThrow(new RuntimeException("invalid"));
 
         mockMvc.perform(post("/api/reviews/words/1")
+                .header("X-User-Id", "1")
                 .param("reviewDate", "2026-02-10")
                 .param("reviewType", "daily")
                 .param("notes", "note"))
@@ -67,48 +69,48 @@ class WordReviewControllerTest {
 
     @Test
     void getWordReviewsReturnsOk() throws Exception {
-        when(wordReviewService.getWordReviews(1L))
+        when(wordReviewService.getWordReviews(1L, 1L))
                 .thenReturn(List.of(reviewWithId(11L, LocalDate.of(2026, 2, 1))));
 
-        mockMvc.perform(get("/api/reviews/words/1"))
+        mockMvc.perform(get("/api/reviews/words/1").header("X-User-Id", "1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].id").value(11));
     }
 
     @Test
     void getReviewsByDateReturnsOk() throws Exception {
-        when(wordReviewService.getReviewsByDate(LocalDate.of(2026, 2, 1)))
+        when(wordReviewService.getReviewsByDate(LocalDate.of(2026, 2, 1), 1L))
                 .thenReturn(List.of(reviewWithId(12L, LocalDate.of(2026, 2, 1))));
 
-        mockMvc.perform(get("/api/reviews/date/2026-02-01"))
+        mockMvc.perform(get("/api/reviews/date/2026-02-01").header("X-User-Id", "1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].id").value(12));
     }
 
     @Test
     void isWordReviewedOnDateReturnsBoolean() throws Exception {
-        when(wordReviewService.isWordReviewedOnDate(3L, LocalDate.of(2026, 2, 1))).thenReturn(true);
+        when(wordReviewService.isWordReviewedOnDate(3L, LocalDate.of(2026, 2, 1), 1L)).thenReturn(true);
 
-        mockMvc.perform(get("/api/reviews/words/3/check/2026-02-01"))
+        mockMvc.perform(get("/api/reviews/words/3/check/2026-02-01").header("X-User-Id", "1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").value(true));
     }
 
     @Test
     void getReviewCountReturnsCount() throws Exception {
-        when(wordReviewService.getReviewCount(8L)).thenReturn(5L);
+        when(wordReviewService.getReviewCount(8L, 1L)).thenReturn(5L);
 
-        mockMvc.perform(get("/api/reviews/words/8/count"))
+        mockMvc.perform(get("/api/reviews/words/8/count").header("X-User-Id", "1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").value(5));
     }
 
     @Test
     void getReviewDatesReturnsDates() throws Exception {
-        when(wordReviewService.getReviewDates(1L))
+        when(wordReviewService.getReviewDates(1L, 1L))
                 .thenReturn(List.of(LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 2)));
 
-        mockMvc.perform(get("/api/reviews/words/1/dates"))
+        mockMvc.perform(get("/api/reviews/words/1/dates").header("X-User-Id", "1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0]").value("2026-02-01"))
                 .andExpect(jsonPath("$[1]").value("2026-02-02"));
@@ -117,28 +119,28 @@ class WordReviewControllerTest {
     @Test
     void getReviewSummaryReturnsSummaryMap() throws Exception {
         LocalDate date = LocalDate.of(2026, 2, 10);
-        when(wordReviewService.getReviewSummary(5L))
+        when(wordReviewService.getReviewSummary(5L, 1L))
                 .thenReturn(Map.of(date, reviewWithId(99L, date)));
 
-        mockMvc.perform(get("/api/reviews/words/5/summary"))
+        mockMvc.perform(get("/api/reviews/words/5/summary").header("X-User-Id", "1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.['2026-02-10'].id").value(99));
     }
 
     @Test
     void deleteReviewReturnsOk() throws Exception {
-        mockMvc.perform(delete("/api/reviews/44"))
+        mockMvc.perform(delete("/api/reviews/44").header("X-User-Id", "1"))
                 .andExpect(status().isOk());
 
-        verify(wordReviewService).deleteReview(44L);
+        verify(wordReviewService).deleteReview(44L, 1L);
     }
 
     @Test
     void deleteReviewByWordAndDateReturnsOk() throws Exception {
-        mockMvc.perform(delete("/api/reviews/words/2/date/2026-02-10"))
+        mockMvc.perform(delete("/api/reviews/words/2/date/2026-02-10").header("X-User-Id", "1"))
                 .andExpect(status().isOk());
 
-        verify(wordReviewService).deleteReviewByWordAndDate(2L, LocalDate.of(2026, 2, 10));
+        verify(wordReviewService).deleteReviewByWordAndDate(2L, LocalDate.of(2026, 2, 10), 1L);
     }
 
     private static WordReview reviewWithId(Long id, LocalDate date) {

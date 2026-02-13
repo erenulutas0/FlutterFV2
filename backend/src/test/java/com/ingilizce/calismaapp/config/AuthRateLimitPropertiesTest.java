@@ -24,5 +24,8 @@ class AuthRateLimitPropertiesTest {
         assertEquals(10, properties.getRegisterIpMaxAttempts());
         assertEquals(600, properties.getRegisterIpWindowSeconds());
         assertEquals(1800, properties.getRegisterIpBlockSeconds());
+        assertEquals(6, properties.getPasswordResetIpMaxAttempts());
+        assertEquals(600, properties.getPasswordResetIpWindowSeconds());
+        assertEquals(1800, properties.getPasswordResetIpBlockSeconds());
     }
 }

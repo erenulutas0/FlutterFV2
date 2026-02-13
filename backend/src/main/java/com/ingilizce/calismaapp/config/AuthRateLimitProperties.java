@@ -29,6 +29,10 @@ public class AuthRateLimitProperties {
     private long registerIpWindowSeconds = 600;
     private long registerIpBlockSeconds = 1800;
 
+    private int passwordResetIpMaxAttempts = 6;
+    private long passwordResetIpWindowSeconds = 600;
+    private long passwordResetIpBlockSeconds = 1800;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -131,5 +135,29 @@ public class AuthRateLimitProperties {
 
     public void setRegisterIpBlockSeconds(long registerIpBlockSeconds) {
         this.registerIpBlockSeconds = registerIpBlockSeconds;
+    }
+
+    public int getPasswordResetIpMaxAttempts() {
+        return passwordResetIpMaxAttempts;
+    }
+
+    public void setPasswordResetIpMaxAttempts(int passwordResetIpMaxAttempts) {
+        this.passwordResetIpMaxAttempts = passwordResetIpMaxAttempts;
+    }
+
+    public long getPasswordResetIpWindowSeconds() {
+        return passwordResetIpWindowSeconds;
+    }
+
+    public void setPasswordResetIpWindowSeconds(long passwordResetIpWindowSeconds) {
+        this.passwordResetIpWindowSeconds = passwordResetIpWindowSeconds;
+    }
+
+    public long getPasswordResetIpBlockSeconds() {
+        return passwordResetIpBlockSeconds;
+    }
+
+    public void setPasswordResetIpBlockSeconds(long passwordResetIpBlockSeconds) {
+        this.passwordResetIpBlockSeconds = passwordResetIpBlockSeconds;
     }
 }

@@ -1,7 +1,9 @@
 package com.ingilizce.calismaapp.controller;
 
 import com.ingilizce.calismaapp.service.GrammarCheckService;
+import com.ingilizce.calismaapp.security.CurrentUserContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,11 +17,13 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/grammar")
-@CrossOrigin(originPatterns = "*")
 public class GrammarController {
 
     @Autowired
     private GrammarCheckService grammarCheckService;
+
+    @Autowired
+    private CurrentUserContext currentUserContext;
 
     /**
      * Check grammar for a single sentence
@@ -143,6 +147,11 @@ public class GrammarController {
      */
     @PostMapping("/toggle")
     public ResponseEntity<Map<String, Object>> toggleGrammarCheck(@RequestBody Map<String, Boolean> request) {
+        if (currentUserContext.shouldEnforceAuthz() && !currentUserContext.hasRole("ADMIN")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("enabled", grammarCheckService.isEnabled(), "message", "Admin role required"));
+        }
+
         Boolean enabled = request.get("enabled");
         if (enabled != null) {
             grammarCheckService.setEnabled(enabled);

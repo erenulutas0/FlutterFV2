@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ingilizce.calismaapp.entity.Message;
 import com.ingilizce.calismaapp.entity.User;
 import com.ingilizce.calismaapp.repository.UserRepository;
+import com.ingilizce.calismaapp.security.JwtAuthenticationFilter;
+import com.ingilizce.calismaapp.security.UserHeaderConsistencyFilter;
 import com.ingilizce.calismaapp.service.ChatService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,6 +48,12 @@ class ChatControllerTest {
 
     @MockBean
     private UserRepository userRepository;
+
+    @MockBean
+    private JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    @MockBean
+    private UserHeaderConsistencyFilter userHeaderConsistencyFilter;
 
     @Test
     void sendMessageReturnsBadRequestWhenHeaderMissing() throws Exception {

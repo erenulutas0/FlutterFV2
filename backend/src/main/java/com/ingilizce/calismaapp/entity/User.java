@@ -38,6 +38,9 @@ public class User {
     @Column(name = "last_seen_at")
     private LocalDateTime lastSeenAt;
 
+    @Column(name = "email_verified_at")
+    private LocalDateTime emailVerifiedAt;
+
     public enum Role {
         USER,
         ADMIN,
@@ -154,6 +157,14 @@ public class User {
         this.lastSeenAt = lastSeenAt;
     }
 
+    public LocalDateTime getEmailVerifiedAt() {
+        return emailVerifiedAt;
+    }
+
+    public void setEmailVerifiedAt(LocalDateTime emailVerifiedAt) {
+        this.emailVerifiedAt = emailVerifiedAt;
+    }
+
     // Helper method to check active subscription
     public boolean isSubscriptionActive() {
         return subscriptionEndDate != null && subscriptionEndDate.isAfter(LocalDateTime.now());
@@ -164,5 +175,9 @@ public class User {
         if (lastSeenAt == null)
             return false;
         return lastSeenAt.isAfter(LocalDateTime.now().minusMinutes(5));
+    }
+
+    public boolean isEmailVerified() {
+        return emailVerifiedAt != null;
     }
 }

@@ -7,6 +7,7 @@ import '../config/app_config.dart';
 /// Kullanıcı oturum ve profil yönetimi servisi
 class AuthService {
   static const String _tokenKey = 'session_token';
+  static const String _refreshTokenKey = 'refresh_token';
   static const String _userDataKey = 'user_data';
   static const String _rememberMeKey = 'remember_me';
 
@@ -23,6 +24,7 @@ class AuthService {
   // Cache
   Map<String, dynamic>? _cachedUser;
   String? _cachedToken;
+  String? _cachedRefreshToken;
 
   /// Oturum token'ını al
   Future<String?> getToken() async {
@@ -31,6 +33,14 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     _cachedToken = prefs.getString(_tokenKey);
     return _cachedToken;
+  }
+
+  Future<String?> getRefreshToken() async {
+    if (_cachedRefreshToken != null) return _cachedRefreshToken;
+
+    final prefs = await SharedPreferences.getInstance();
+    _cachedRefreshToken = prefs.getString(_refreshTokenKey);
+    return _cachedRefreshToken;
   }
 
   /// Kullanıcı verilerini al
@@ -73,19 +83,21 @@ class AuthService {
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200 && data['success'] == true) {
-        // Başarılı giriş
-        final userId = data['userId'] ?? 0;
-        final token = data['sessionToken'] ?? "valid_session_$userId"; 
+        final token = data['accessToken'] ?? data['sessionToken'];
+        final refreshToken = data['refreshToken'];
+        if (token == null || refreshToken == null) {
+          return {'success': false, 'message': 'Token alınamadı'};
+        }
         
         final user = data['user'] ?? {
-          'id': userId,
+          'id': data['userId'] ?? 0,
           'email': email,
           'role': 'USER',
           'displayName': email.split('@')[0],
           'userTag': '#00000',
         };
 
-        await saveSession(token, user, rememberMe: rememberMe);
+        await saveSession(token, refreshToken, user, rememberMe: rememberMe);
         
         // Offline giriş için şifre hash'ini kaydet
         await _saveOfflineCredentials(email, password, user);
@@ -174,9 +186,10 @@ class AuthService {
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200 && data['success'] == true) {
-        // Kayıt başarılı, şimdi otomatik giriş yapalım veya session'ı kaydedelim
-        if (data['sessionToken'] != null) {
-           await saveSession(data['sessionToken'], data['user']);
+        final token = data['accessToken'] ?? data['sessionToken'];
+        final refreshToken = data['refreshToken'];
+        if (token != null && refreshToken != null) {
+           await saveSession(token, refreshToken, data['user']);
            return {'success': true, 'user': data['user']};
         }
         return await login(email, password, rememberMe: true);
@@ -213,15 +226,13 @@ class AuthService {
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200 && data['success'] == true) {
-         final userId = data['userId'] ?? 0;
-         // Backend'den sessionToken gelmiyor olabilir bu endpointte, 
-         // dummy token veya backend'i token dönecek şekilde güncellememiz gerekirdi.
-         // Ama şimdilik mevcut login yapısına uyduralım.
-         // AuthController google-login'de token dönmüyor, sadece user dönüyor.
-         // Client side dummy token üretelim:
-         final token = "google_session_${googleUser.id}";
-         
-         await saveSession(token, data['user']);
+         final token = data['accessToken'] ?? data['sessionToken'];
+         final refreshToken = data['refreshToken'];
+         if (token == null || refreshToken == null) {
+           return {'success': false, 'message': 'Token alınamadı'};
+         }
+
+         await saveSession(token, refreshToken, data['user']);
          return {'success': true, 'user': data['user']};
       } else {
         return {'success': false, 'message': data['error'] ?? 'Google ile giriş başarısız'};
@@ -233,12 +244,14 @@ class AuthService {
   }
 
   /// Oturumu kaydet
-  Future<void> saveSession(String token, Map<String, dynamic> user, {bool rememberMe = true}) async {
+  Future<void> saveSession(String token, String refreshToken, Map<String, dynamic> user, {bool rememberMe = true}) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_tokenKey, token);
+    await prefs.setString(_refreshTokenKey, refreshToken);
     await prefs.setString(_userDataKey, jsonEncode(user));
     await prefs.setBool(_rememberMeKey, rememberMe);
     _cachedToken = token;
+    _cachedRefreshToken = refreshToken;
     _cachedUser = user;
   }
 
@@ -252,13 +265,20 @@ class AuthService {
   /// Çıkış yap
   Future<void> logout() async {
     final token = await getToken();
+    final refreshToken = await getRefreshToken();
     
     if (token != null) {
       try {
         final baseUrl = await AppConfig.apiBaseUrl;
         await http.post(
           Uri.parse('$baseUrl/auth/logout'),
-          headers: {'Authorization': 'Bearer $token'},
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            if (refreshToken != null) 'refreshToken': refreshToken,
+          }),
         );
       } catch (e) {
         // Sessizce geç
@@ -268,10 +288,12 @@ class AuthService {
     // Yerel verileri temizle
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
+    await prefs.remove(_refreshTokenKey);
     await prefs.remove(_userDataKey);
     // Remember me kalsın mı? Genelde logout olunca her şey silinir.
     
     _cachedToken = null;
+    _cachedRefreshToken = null;
     _cachedUser = null;
     try {
       await _googleSignIn.signOut();

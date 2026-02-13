@@ -2,6 +2,8 @@ package com.ingilizce.calismaapp.controller;
 
 import com.ingilizce.calismaapp.entity.User;
 import com.ingilizce.calismaapp.repository.UserRepository;
+import com.ingilizce.calismaapp.security.JwtAuthenticationFilter;
+import com.ingilizce.calismaapp.security.UserHeaderConsistencyFilter;
 import com.ingilizce.calismaapp.service.LeaderboardService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +39,12 @@ class LeaderboardControllerTest {
 
     @MockBean
     private UserRepository userRepository;
+
+    @MockBean
+    private JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    @MockBean
+    private UserHeaderConsistencyFilter userHeaderConsistencyFilter;
 
     @Test
     void testGetTopUsersEnriched() throws Exception {

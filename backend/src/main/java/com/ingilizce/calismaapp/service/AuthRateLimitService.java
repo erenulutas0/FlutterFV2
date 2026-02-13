@@ -53,6 +53,7 @@ public class AuthRateLimitService {
     private final ConcurrentHashMap<String, AttemptState> loginPrincipalAttempts = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AttemptState> loginIpAttempts = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AttemptState> registerIpAttempts = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, AttemptState> passwordResetIpAttempts = new ConcurrentHashMap<>();
 
     @Autowired
     public AuthRateLimitService(AuthRateLimitProperties properties,
@@ -215,6 +216,48 @@ public class AuthRateLimitService {
         }
 
         registerIpAttempts.remove("register:ip:" + normalizeValue(clientIp));
+    }
+
+    public RateLimitDecision checkPasswordResetRequest(String clientIp) {
+        if (!properties.isEnabled()) {
+            return RateLimitDecision.allowed();
+        }
+
+        if (canUseRedis()) {
+            try {
+                return checkRedisLimit("password-reset:ip:" + normalizeValue(clientIp));
+            } catch (Exception ex) {
+                onRedisFailure("checkPasswordResetRequest", ex);
+                if (isFailClosedMode()) {
+                    return denyByRedisFailure("checkPasswordResetRequest");
+                }
+            }
+        }
+
+        return check("password-reset:ip:" + normalizeValue(clientIp), passwordResetIpAttempts,
+                properties.getPasswordResetIpWindowSeconds(), properties.getPasswordResetIpBlockSeconds());
+    }
+
+    public void recordPasswordResetRequest(String clientIp) {
+        if (!properties.isEnabled()) {
+            return;
+        }
+
+        if (canUseRedis()) {
+            try {
+                recordRedisFailure("password-reset:ip:" + normalizeValue(clientIp),
+                        properties.getPasswordResetIpWindowSeconds(),
+                        properties.getPasswordResetIpBlockSeconds(),
+                        properties.getPasswordResetIpMaxAttempts());
+                return;
+            } catch (Exception ex) {
+                onRedisFailure("recordPasswordResetRequest", ex);
+            }
+        }
+
+        recordFailure("password-reset:ip:" + normalizeValue(clientIp), passwordResetIpAttempts,
+                properties.getPasswordResetIpWindowSeconds(), properties.getPasswordResetIpBlockSeconds(),
+                properties.getPasswordResetIpMaxAttempts());
     }
 
     protected long currentTimeMillis() {

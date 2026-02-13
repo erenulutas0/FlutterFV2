@@ -7,7 +7,9 @@ import com.ingilizce.calismaapp.repository.PaymentTransactionRepository;
 import com.ingilizce.calismaapp.repository.SubscriptionPlanRepository;
 import com.ingilizce.calismaapp.repository.UserRepository;
 import com.ingilizce.calismaapp.service.IyzicoService;
+import com.ingilizce.calismaapp.security.CurrentUserContext;
 // iyzico SDK removed
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -25,15 +27,18 @@ public class SubscriptionController {
     private final UserRepository userRepository;
     private final PaymentTransactionRepository transactionRepository;
     private final IyzicoService iyzicoService;
+    private final CurrentUserContext currentUserContext;
 
     public SubscriptionController(SubscriptionPlanRepository planRepository,
             UserRepository userRepository,
             PaymentTransactionRepository transactionRepository,
-            IyzicoService iyzicoService) {
+            IyzicoService iyzicoService,
+            CurrentUserContext currentUserContext) {
         this.planRepository = planRepository;
         this.userRepository = userRepository;
         this.transactionRepository = transactionRepository;
         this.iyzicoService = iyzicoService;
+        this.currentUserContext = currentUserContext;
     }
 
     @GetMapping("/plans")
@@ -189,6 +194,9 @@ public class SubscriptionController {
     public ResponseEntity<Map<String, Object>> activateDemoSubscription(
             @RequestBody Map<String, Object> request,
             @RequestHeader("X-User-Id") Long userId) {
+        if (currentUserContext.shouldEnforceAuthz() && !currentUserContext.hasRole("ADMIN")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Admin role required"));
+        }
 
         try {
             Long planId = Long.parseLong(request.get("planId").toString());

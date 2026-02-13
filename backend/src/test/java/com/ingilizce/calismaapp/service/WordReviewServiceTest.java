@@ -38,6 +38,7 @@ class WordReviewServiceTest {
     private Word testWord;
     private WordReview testReview;
     private LocalDate today;
+    private final Long userId = 1L;
 
     @BeforeEach
     void setUp() {
@@ -45,6 +46,7 @@ class WordReviewServiceTest {
 
         testWord = new Word();
         testWord.setId(100L);
+        testWord.setUserId(userId);
         testWord.setEnglishWord("Test");
 
         testReview = new WordReview(testWord, today);
@@ -54,11 +56,11 @@ class WordReviewServiceTest {
 
     @Test
     void addReview_ShouldSaveReview_WhenValid() {
-        when(wordRepository.findById(100L)).thenReturn(Optional.of(testWord));
-        when(wordReviewRepository.existsByWordIdAndReviewDate(100L, today)).thenReturn(false);
+        when(wordRepository.findByIdAndUserId(100L, userId)).thenReturn(Optional.of(testWord));
+        when(wordReviewRepository.existsByWordIdAndReviewDateAndWordUserId(100L, today, userId)).thenReturn(false);
         when(wordReviewRepository.save(any(WordReview.class))).thenReturn(testReview);
 
-        WordReview result = wordReviewService.addReview(100L, today, "HARD", "Note");
+        WordReview result = wordReviewService.addReview(100L, userId, today, "HARD", "Note");
 
         assertNotNull(result);
         assertEquals(testWord, result.getWord());
@@ -68,26 +70,26 @@ class WordReviewServiceTest {
 
     @Test
     void addReview_ShouldThrowException_WhenWordNotFound() {
-        when(wordRepository.findById(999L)).thenReturn(Optional.empty());
+        when(wordRepository.findByIdAndUserId(999L, userId)).thenReturn(Optional.empty());
 
-        assertThrows(RuntimeException.class, () -> wordReviewService.addReview(999L, today, "EASY", ""));
+        assertThrows(RuntimeException.class, () -> wordReviewService.addReview(999L, userId, today, "EASY", ""));
     }
 
     @Test
     void addReview_ShouldThrowException_WhenAlreadyReviewed() {
-        when(wordRepository.findById(100L)).thenReturn(Optional.of(testWord));
-        when(wordReviewRepository.existsByWordIdAndReviewDate(100L, today)).thenReturn(true);
+        when(wordRepository.findByIdAndUserId(100L, userId)).thenReturn(Optional.of(testWord));
+        when(wordReviewRepository.existsByWordIdAndReviewDateAndWordUserId(100L, today, userId)).thenReturn(true);
 
-        assertThrows(RuntimeException.class, () -> wordReviewService.addReview(100L, today, "EASY", ""));
+        assertThrows(RuntimeException.class, () -> wordReviewService.addReview(100L, userId, today, "EASY", ""));
         verify(wordReviewRepository, never()).save(any(WordReview.class));
     }
 
     @Test
     void getWordReviews_ShouldReturnList() {
-        when(wordReviewRepository.findByWordIdOrderByReviewDateDesc(100L))
+        when(wordReviewRepository.findByWordIdAndWordUserIdOrderByReviewDateDesc(100L, userId))
                 .thenReturn(Arrays.asList(testReview));
 
-        List<WordReview> result = wordReviewService.getWordReviews(100L);
+        List<WordReview> result = wordReviewService.getWordReviews(100L, userId);
 
         assertFalse(result.isEmpty());
         assertEquals(1, result.size());
@@ -95,10 +97,10 @@ class WordReviewServiceTest {
 
     @Test
     void getReviewsByDate_ShouldReturnList() {
-        when(wordReviewRepository.findByReviewDate(today))
+        when(wordReviewRepository.findByReviewDateAndWordUserId(today, userId))
                 .thenReturn(Arrays.asList(testReview));
 
-        List<WordReview> result = wordReviewService.getReviewsByDate(today);
+        List<WordReview> result = wordReviewService.getReviewsByDate(today, userId);
 
         assertFalse(result.isEmpty());
         assertEquals(today, result.get(0).getReviewDate());
@@ -106,10 +108,10 @@ class WordReviewServiceTest {
 
     @Test
     void getReviewSummary_ShouldReturnMap() {
-        when(wordReviewRepository.findByWordIdOrderByReviewDateDesc(100L))
+        when(wordReviewRepository.findByWordIdAndWordUserIdOrderByReviewDateDesc(100L, userId))
                 .thenReturn(Arrays.asList(testReview));
 
-        Map<LocalDate, WordReview> summary = wordReviewService.getReviewSummary(100L);
+        Map<LocalDate, WordReview> summary = wordReviewService.getReviewSummary(100L, userId);
 
         assertNotNull(summary);
         assertTrue(summary.containsKey(today));
@@ -118,24 +120,26 @@ class WordReviewServiceTest {
 
     @Test
     void deleteReview_ShouldCallDelete() {
-        wordReviewService.deleteReview(1L);
-        verify(wordReviewRepository).deleteById(1L);
+        when(wordReviewRepository.findByIdAndWordUserId(1L, userId)).thenReturn(Optional.of(testReview));
+
+        wordReviewService.deleteReview(1L, userId);
+        verify(wordReviewRepository).delete(testReview);
     }
 
     @Test
     void isWordReviewedOnDate_ShouldReturnRepositoryValue() {
-        when(wordReviewRepository.existsByWordIdAndReviewDate(100L, today)).thenReturn(true);
+        when(wordReviewRepository.existsByWordIdAndReviewDateAndWordUserId(100L, today, userId)).thenReturn(true);
 
-        boolean reviewed = wordReviewService.isWordReviewedOnDate(100L, today);
+        boolean reviewed = wordReviewService.isWordReviewedOnDate(100L, today, userId);
 
         assertTrue(reviewed);
     }
 
     @Test
     void getReviewCount_ShouldReturnRepositoryCount() {
-        when(wordReviewRepository.countByWordId(100L)).thenReturn(5L);
+        when(wordReviewRepository.countByWordIdAndWordUserId(100L, userId)).thenReturn(5L);
 
-        long count = wordReviewService.getReviewCount(100L);
+        long count = wordReviewService.getReviewCount(100L, userId);
 
         assertEquals(5L, count);
     }
@@ -144,10 +148,10 @@ class WordReviewServiceTest {
     void getReviewDates_ShouldReturnDateListInOrderProvidedByRepository() {
         LocalDate older = today.minusDays(1);
         WordReview olderReview = new WordReview(testWord, older);
-        when(wordReviewRepository.findByWordIdOrderByReviewDateDesc(100L))
+        when(wordReviewRepository.findByWordIdAndWordUserIdOrderByReviewDateDesc(100L, userId))
                 .thenReturn(Arrays.asList(testReview, olderReview));
 
-        List<LocalDate> dates = wordReviewService.getReviewDates(100L);
+        List<LocalDate> dates = wordReviewService.getReviewDates(100L, userId);
 
         assertEquals(Arrays.asList(today, older), dates);
     }
@@ -157,9 +161,9 @@ class WordReviewServiceTest {
         WordReview second = new WordReview(testWord, today);
         second.setId(2L);
         List<WordReview> reviews = Arrays.asList(testReview, second);
-        when(wordReviewRepository.findByWordIdAndReviewDate(100L, today)).thenReturn(reviews);
+        when(wordReviewRepository.findByWordIdAndReviewDateAndWordUserId(100L, today, userId)).thenReturn(reviews);
 
-        wordReviewService.deleteReviewByWordAndDate(100L, today);
+        wordReviewService.deleteReviewByWordAndDate(100L, today, userId);
 
         verify(wordReviewRepository).deleteAll(reviews);
     }
