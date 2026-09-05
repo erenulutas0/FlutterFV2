@@ -45,6 +45,12 @@ NAV_BAR = 132
 # "puzzled / Kafa karışık, şaşkın" under an English heading -- true, and wrong
 # for a listing aimed at someone who does not read Turkish.
 #
+# 08_daily_words is out of the English set for exactly the same reason, and was
+# briefly in it before the rendered slide showed "streaming / akış" over an
+# English caption. Any screen that displays a meaning belongs to the Turkish
+# set only, until a capture is taken on an account whose native language is
+# English.
+#
 # The order differs too. Play shows the first two or three in search results,
 # and what makes this app worth a second look to a stranger is the speaking
 # roleplay and the book reader, not the daily plan.
@@ -68,6 +74,7 @@ SHOTS = [
     ('02_tutor.png', 'Kafede sipariş ver', 'Sesli rol yapma sahneleri'),
     ('03_words.png', 'Kelimelerin nerede duruyor', 'Güç çubuğu ve kaynak filtresi'),
     ('07_session.png', 'Unutmadan hemen önce', 'Aralıklı tekrar, her gün kısa'),
+    ('08_daily_words.png', 'Seviyene göre beş kelime', 'Tek dokunuşla listende'),
     ('05_books.png', 'Gerçek kitaplar', 'Seviyene göre, ücretsiz'),
     ('06_reader_word.png', 'Bilmediğin kelimeye dokun', 'Cümlenin içindeki anlamı'),
     ('04_practice.png', 'Her yol tek yerde', 'Çeviri, okuma, yazma, gramer'),
