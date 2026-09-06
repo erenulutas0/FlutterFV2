@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../../l10n/app_localizations.dart';
 import '../../providers/app_state_provider.dart';
 import '../../services/ai_error_message_formatter.dart';
+import '../services/nf_plan_savings.dart';
 import '../../services/analytics_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/subscription_service.dart';
@@ -264,6 +265,39 @@ class _NfSubscriptionPageState extends State<NfSubscriptionPage> {
 
   double _analyticsPriceForPlan(SubscriptionPlan plan) {
     return _storeProductForPlan(plan)?.rawPrice ?? plan.price;
+  }
+
+  /// "Save N%" for the annual card, or null when there is nothing honest to
+  /// put there.
+  ///
+  /// Both prices come from the same source. Google's product for one plan and
+  /// the backend's fallback for the other would compare a EUR figure against a
+  /// TRY one, and the percentage that came out would be arithmetic on two
+  /// different currencies. When either store product is missing, both sides
+  /// fall back to the backend prices, which at least share a currency.
+  String? _annualSavingsLabel() {
+    SubscriptionPlan? monthly;
+    SubscriptionPlan? annual;
+    for (final SubscriptionPlan plan in _plans) {
+      if (plan.name == 'FREE') continue;
+      if (plan.name.contains('ANNUAL')) {
+        annual ??= plan;
+      } else if (plan.durationDays <= 31) {
+        monthly ??= plan;
+      }
+    }
+    if (monthly == null || annual == null) return null;
+
+    final ProductDetails? monthlyStore = _storeProductForPlan(monthly);
+    final ProductDetails? annualStore = _storeProductForPlan(annual);
+    final bool bothFromStore = monthlyStore != null && annualStore != null;
+
+    final int? percent = annualSavingsPercent(
+      monthly: bothFromStore ? monthlyStore.rawPrice : monthly.price,
+      annual: bothFromStore ? annualStore.rawPrice : annual.price,
+    );
+    if (percent == null) return null;
+    return context.tr('subscription.plan.save').replaceAll('{n}', '$percent');
   }
 
   String _analyticsCurrencyForPlan(SubscriptionPlan plan) {
@@ -741,12 +775,16 @@ class _NfSubscriptionPageState extends State<NfSubscriptionPage> {
                   ),
                 ),
               ),
+              // Computed from the two prices on screen, in whatever currency
+              // Google is showing them. It used to be the string "Save 40%":
+              // 33 in Turkish lira, and unknowable anywhere else.
               if (isAnnual)
-                NfChip(
-                  label: context.tr('subscription.plan.save40'),
-                  variant: NfChipVariant.streak,
-                  dense: true,
-                ),
+                if (_annualSavingsLabel() case final String savings)
+                  NfChip(
+                    label: savings,
+                    variant: NfChipVariant.streak,
+                    dense: true,
+                  ),
             ],
           ),
           const SizedBox(height: NfSpace.s10),
