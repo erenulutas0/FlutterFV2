@@ -12,7 +12,8 @@ Reddit'in kural sayfaları buradan çekilemiyor, o yüzden ayrımı açık tutuy
 | Subreddit | Kural durumu | Kaynak |
 |---|---|---|
 | **r/SideProject** | **Doğrulandı** — kendi tanıtımın açıkça hoş karşılanıyor. Kapı karma değil, "bunu gerçekten sen mi yaptın ve gerçek bir yapımcı gibi mi anlatıyorsun". Yeni hesapsan önce bir hafta yorum yap. | [GrowReddit](https://www.growreddit.com/blog/reddit-self-promotion-rules-sideproject), [OneUp](https://oneup.today/tools/reddit-self-promotion-checker/sideproject) |
-| **r/androidapps** | **Doğrulandı** — kurallarla birlikte izin veriliyor. İlk cümlede geliştirici olduğunu açıkla, gerçek ekran görüntüsü koy, mağaza rozeti değil. | [ReachFront](https://reachfront.ai/guides/reddit-marketing-for-apps), [MediaFast](https://www.mediafa.st/how-to-promote/mobile-app-on-reddit) |
+| **r/androidapps** | **YASAK** — Kural 2, birebir: "Any self-promotion, tester requests, new app ideas or app feedback are not allowed." Kendi yönlendirdiği kardeş subreddit **r/droidappshowcase**. Buraya gönderme. | Reddit'in gönderi ekranındaki kural uyarısı, 6 Eylül 2026 |
+| **r/droidappshowcase** | **Doğru adres** — r/androidapps'in resmi kardeşi, tam olarak yeni uygulama göstermek için. Daha küçük, ama kitlesi bunu görmek isteyen insanlar. Showcase olduğu için görsel büyük ihtimalle serbest; kenar çubuğunu oku. | r/androidapps Kural 2 |
 | **r/languagelearning** | **Kısmen** — "şartlarla izinli". "Kendi içeriğini çok sık gönderme" kuralı var; genelde bu ayrı bir haftalık başlık, zorunlu flair veya mod onayı demek. **Göndermeden önce kenar çubuğunu oku.** | [LeadsRover](https://leadsrover.io/subreddits/r/languagelearning) |
 | **r/EnglishLearning** | **Doğrulanamadı** — 707 bin üye, topluluk uygulama önerilerini ve incelemelerini sık konuşuyor, ama kendi tanıtım kuralını teyit edemedim. **Kenar çubuğunu okumadan gönderme.** | [GummySearch](https://gummysearch.com/r/EnglishLearning/) |
 
@@ -35,7 +36,7 @@ boşluk bırakırsan.
 
 1. **Gün 1 — r/SideProject.** En güvenli ve kuralları en net olan. Metin A.
 2. **Gün 3 — Play Console → Yüklemeler'e bak.** Ne geldi?
-3. **Gün 4 — r/androidapps.** Metin A'nın kısaltılmışı, ekran görüntüsüyle.
+3. **Gün 4 — r/droidappshowcase.** Metin A'nın kısaltılmışı, ekran görüntüsüyle. (r/androidapps değil — orada yasak.)
 4. **Gün 6 — tekrar bak.**
 5. **Sonra r/languagelearning**, kenar çubuğunu okuduktan sonra. Metin B.
 6. **En son r/EnglishLearning**, kuralları teyit edersen. Metin B.
@@ -149,7 +150,7 @@ sıralı, ve kaydettiğin kelimeler modern konuşma pratiğinde geri geliyor.
 
 ---
 
-## r/androidapps için
+## r/droidappshowcase için
 
 Metin A'nın kısasını al, ilk üç maddeyi çıkar, yerine iki cümle koy:
 
