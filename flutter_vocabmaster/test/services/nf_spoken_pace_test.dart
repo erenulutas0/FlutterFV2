@@ -45,10 +45,26 @@ void main() {
     expect(NfSpokenPace.from(speech(4)), isNull);
   });
 
-  test('enough words but too little time is still not enough', () {
-    // Ten words rattled off in two seconds: the sample is too short for the
-    // rate to be about anything but that one burst.
-    expect(NfSpokenPace.from(speech(10, gap: 0.0, wordLength: 0.2)), isNull);
+  test('a brisk short sentence is measured, not dropped', () {
+    // Twelve words in a shade under three seconds -- about 250 words a minute,
+    // which is fast but is a person. A three-second floor used to reject this
+    // exact turn on the phone: the sentence was fine, the guard was not.
+    final NfSpokenPace pace =
+        NfSpokenPace.from(speech(12, gap: 0.03, wordLength: 0.21))!;
+
+    expect(pace.wordCount, 12);
+    expect(pace.spokenSeconds, lessThan(3));
+    expect(pace.wordsPerMinute, greaterThan(200));
+  });
+
+  test('an impossible rate is a broken measurement, not a fast talker', () {
+    // Twelve words in under a second. Auctioneers reach 250 and a learner
+    // reading aloud tops out near 200, so this is the timings failing, and
+    // printing it would be printing noise.
+    final NfSpokenPace? pace =
+        NfSpokenPace.from(speech(12, gap: 0.0, wordLength: 0.05));
+
+    expect(pace, isNull);
   });
 
   test('a real turn reports a rate', () {

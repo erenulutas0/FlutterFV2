@@ -57,7 +57,20 @@ class NfSpokenPace {
   /// technically correct and tells a learner nothing true about how they
   /// speak. Short answers stay unmeasured rather than measured badly.
   static const int _minWords = 8;
-  static const double _minSeconds = 3;
+
+  /// Above this the timings are wrong, not the speaker.
+  ///
+  /// Auctioneers reach about 250 and a learner reading a sentence aloud tops
+  /// out near 200, so a number past 300 is a measurement fault rather than a
+  /// fast talker, and reporting it would be reporting noise.
+  ///
+  /// This replaced a three-second floor on the clip, which was the wrong
+  /// question. Word count already guarantees the sample; the duration only
+  /// mattered as a proxy for whether the answer was believable. On the phone
+  /// the floor silently dropped a twelve-word sentence spoken briskly -- a
+  /// perfectly good turn, measured and then thrown away -- while letting
+  /// nothing through that this does not.
+  static const int _maxPlausibleWordsPerMinute = 300;
 
   /// The pace of [words], or null when there is not enough to measure.
   ///
@@ -71,7 +84,12 @@ class NfSpokenPace {
     final double start = words.first.start;
     final double end = words.last.end;
     final double span = end - start;
-    if (!span.isFinite || span < _minSeconds) {
+    if (!span.isFinite || span <= 0) {
+      return null;
+    }
+
+    final int wordsPerMinute = (words.length / span * 60).round();
+    if (wordsPerMinute > _maxPlausibleWordsPerMinute) {
       return null;
     }
 
@@ -86,7 +104,7 @@ class NfSpokenPace {
     }
 
     return NfSpokenPace(
-      wordsPerMinute: (words.length / span * 60).round(),
+      wordsPerMinute: wordsPerMinute,
       longPauses: pauses,
       wordCount: words.length,
       spokenSeconds: span,
