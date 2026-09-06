@@ -10,9 +10,9 @@ is three parts and nothing else --
   hook     two seconds of the mistake, as text, on the app's own dark ground.
            This is frame one, which is the thumbnail and the only frame a
            muted feed guarantees anyone sees.
-  moment   the recording, cut to open just before the mic is pressed and to
-           run a few seconds past the card. When the card lands, a Turkish
-           gloss of the two words appears in the empty band above the mic.
+  moment   the recording, cut to open with the mic already held and to run
+           a few seconds past the card. When the card lands, a Turkish gloss
+           of the two words appears in the strip above the mic.
   name     three seconds: the icon, the name, the same line the bio carries.
 
 The recordings come from `adb shell screenrecord`, which captures no audio,

@@ -160,21 +160,36 @@ public class ChatbotService {
    * <p>Appended to every chat prompt rather than written into each of the ten scenario
    * branches, so a new scene cannot be added without it.
    *
-   * <p>It obeys the same per-level correction policy as the reply. At A1 that policy says
-   * not to correct at all -- confidence before accuracy -- so beginners will see no
-   * corrections, which is the existing product decision and not an oversight of this
+   * <p>The card is deliberately NOT bound to the per-level correction frequency the reply
+   * obeys. It was, and a B2 learner who said "Can you open the light?" got "Oh sure, I'll
+   * flip the switch!" and no card, because B2 policy is "one error every few messages,
+   * sandwiched" and the model applied that to the line too. That policy exists so Amy's
+   * spoken reply does not turn into a lecture; the card is a chip the learner reads on
+   * their own, so it can fire on every clear mistake without costing the conversation
+   * anything. Word choice carried over from Turkish ("open the light", "married with") is
+   * named as a mistake explicitly, because a model that understands the sentence will
+   * otherwise let it pass as communication.
+   *
+   * <p>A1 and A2 still get no card. That policy says not to correct at all -- confidence
+   * before accuracy -- and it is the existing product decision, not an oversight of this
    * feature.
    */
   private static final String FIX_INSTRUCTIONS = """
 
 HOW TO OFFER A CORRECTION:
 - Reply naturally first. Never mention corrections, formats or markers inside your reply.
-- Then, only if the learner's message had one clear mistake worth showing, add a FINAL
-  line of exactly this shape and nothing after it:
+- Then, if the learner's message had one clear mistake, add a FINAL line of exactly this
+  shape and nothing after it:
 %s their exact words %s the corrected words
+- A mistake is anything a native speaker would not say: grammar ("I am agree"), and also
+  word choice carried over from another language ("open the light", "married with",
+  "explain me", "I am boring" meant as "I'm bored"). The meaning being clear does not
+  make the words correct.
+- The correction frequency above governs how much your spoken reply dwells on mistakes.
+  It does not govern this line. The line becomes a quiet card the learner reads alone,
+  so add it for every clear mistake at B1 and above, even when the reply lets it pass.
+- At A1 and A2 omit the line entirely; those learners are not corrected at all.
 - Correct only what they actually said. Never invent a mistake to have something to show.
-- Follow the correction frequency above: if it tells you not to correct at this level,
-  omit the line entirely.
 - One line at most, ever. No explanation on it.
 """.formatted(FIX_MARKER, FIX_SEPARATOR);
 
