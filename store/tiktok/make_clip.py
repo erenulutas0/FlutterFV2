@@ -71,6 +71,15 @@ CLIPS = {
         hook=('Bunu sen de diyorsun:', 'I am boring'),
         gloss=(('boring', 'sıkıcı'), ('bored', 'sıkılmış')),
     ),
+    'light': dict(
+        src='klio_light.mp4',
+        # Released at 12.4, the card lands at 14.0. Same offsets as 'bored':
+        # the cut opens 2.3s before the card. Measured with -ss AFTER -i; the
+        # contact sheet made with an input seek read every moment 1.5s early.
+        start=11.7, end=19.9, lands=14.0,
+        hook=('Bunu sen de diyorsun:', 'open the light'),
+        gloss=(('open', 'açmak (kapı, kutu)'), ('turn on', 'açmak (ışık, TV)')),
+    ),
 }
 
 
