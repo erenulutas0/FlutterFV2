@@ -1606,9 +1606,14 @@ class _HistoryCell extends StatelessWidget {
       width: size,
       height: size * 1.6,
       decoration: BoxDecoration(
-        color: practised ? t.streakText : t.border,
+        // Today is tinted, not outlined. A hairline border on a nine-pixel
+        // cell is invisible on a phone -- looked at it on the device and the
+        // one cell that means "now, and still open" was reading as another
+        // missed day. Three states, three fills: practised, today, missed.
+        color: practised
+            ? t.streakText
+            : (isToday ? Color.lerp(t.border, t.primary, 0.45)! : t.border),
         borderRadius: BorderRadius.circular(2),
-        border: isToday ? Border.fromBorderSide(t.side) : null,
       ),
     );
   }
