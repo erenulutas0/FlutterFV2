@@ -106,6 +106,13 @@ CLIPS = {
         hook=('Bunu sen de diyorsun:', "I'm going to home"),
         gloss=(('to home', '"home" yön alır, "to" almaz'), ('going home', 'eve gidiyorum')),
     ),
+    'explain': dict(
+        src='klio_explain.mp4',
+        # Card at about 22.75 on the raw sheet; confirmed on the segment sheet.
+        start=20.45, end=28.65, lands=22.75,
+        hook=('Bunu sen de diyorsun:', 'explain me'),
+        gloss=(('explain me', 'kişi "to" ile gelir'), ('explain to me', 'bana açıkla')),
+    ),
 }
 
 
