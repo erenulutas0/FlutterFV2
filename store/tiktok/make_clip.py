@@ -90,6 +90,15 @@ CLIPS = {
         hook=('Bunu sen de diyorsun:', 'I am agree'),
         gloss=(('agree', 'fiil — "am" almaz'), ('I agree', 'katılıyorum')),
     ),
+    'verylike': dict(
+        src='klio_verylike.mp4',
+        # Third thread in the file; the first was already answered when the
+        # recording began and the second was transcribed as "I'm very naked".
+        # Card at about 20.0 on the raw sheet; confirmed on the segment sheet.
+        start=17.7, end=25.9, lands=20.0,
+        hook=('Bunu sen de diyorsun:', 'I very like it'),
+        gloss=(('very like', '"very" fiile gelmez'), ('really like', 'gerçekten sevmek')),
+    ),
 }
 
 
