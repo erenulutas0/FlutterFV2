@@ -101,3 +101,6 @@ ui-review/
 backend/Userspc.m2-repo/
 scripts/_tour.ps1
 monitoring/prometheus/scrape-token
+
+# TikTok clip intermediates (hook/end cards, cut segments)
+store/tiktok/build/
