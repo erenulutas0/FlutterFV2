@@ -99,6 +99,13 @@ CLIPS = {
         hook=('Bunu sen de diyorsun:', 'I very like it'),
         gloss=(('very like', '"very" fiile gelmez'), ('really like', 'gerçekten sevmek')),
     ),
+    'home': dict(
+        src='klio_home.mp4',
+        # The card lands at about 36.75 in a 38.6s file; the tail is held.
+        start=34.45, end=42.65, lands=36.75,
+        hook=('Bunu sen de diyorsun:', "I'm going to home"),
+        gloss=(('to home', '"home" yön alır, "to" almaz'), ('going home', 'eve gidiyorum')),
+    ),
 }
 
 
@@ -114,12 +121,24 @@ def hook_card(path, line1, line2):
     im = Image.new('RGB', (W, H), GROUND)
     d = ImageDraw.Draw(im)
     centred(d, 690, line1, font(SEMI_F, 60), DIM)
-    # The mistake sits in a bubble like the one it will appear in.
-    f = font(BLACK_F, 118)
-    tw = d.textlength(line2, font=f)
+    # The mistake sits in a bubble like the one it will appear in. The type
+    # starts at 118 and comes down until the bubble clears the edges by a
+    # margin; "I'm going to home" ran off both sides at the full size.
+    size = 118
+    while True:
+        f = font(BLACK_F, size)
+        tw = d.textlength(line2, font=f)
+        if tw + 2 * 56 <= W - 2 * 48 or size <= 60:
+            break
+        size -= 4
     x0, x1 = W // 2 - tw // 2 - 56, W // 2 + tw // 2 + 56
-    d.rounded_rectangle((x0, 800, x1, 990), radius=44, fill=BUBBLE)
-    centred(d, 812, line2, f, WHITE)
+    # Bubble height and text baseline follow the size, so a smaller line
+    # sits centred in a proportionally smaller bubble rather than low in
+    # a fixed one.
+    bh = int(size * 1.6)
+    y0 = 895 - bh // 2
+    d.rounded_rectangle((x0, y0, x1, y0 + bh), radius=44, fill=BUBBLE)
+    centred(d, y0 + int(size * 0.1), line2, f, WHITE)
     im.save(path)
 
 
@@ -156,6 +175,13 @@ def run(args):
     subprocess.check_call(args)
 
 
+def duration_of(path):
+    out = subprocess.check_output(
+        ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+         '-of', 'default=nw=1:nk=1', path])
+    return float(out.decode().strip())
+
+
 def build(name):
     c = CLIPS[name]
     os.makedirs(OUT, exist_ok=True)
@@ -171,12 +197,18 @@ def build(name):
     end_card(end)
 
     crop_h = CROP_BOTTOM - CROP_TOP
+    # When the card lands near the end of the recording there is not enough
+    # settled tail to read it. The settled frame is static, so holding the
+    # last frame is the same footage the recorder would have written.
+    src = os.path.join(RAW, c['src'])
+    short_by = max(0.0, c['end'] - duration_of(src))
     run(['ffmpeg', '-v', 'error', '-y',
-         '-i', os.path.join(RAW, c['src']),
+         '-i', src,
          '-ss', str(c['start']), '-t', str(c['end'] - c['start']),
          '-vf', ('crop=1080:%d:0:%d,scale=-2:%d,'
-                 'pad=%d:%d:(ow-iw)/2:0:color=%s,fps=%d,format=yuv420p'
-                 % (crop_h, CROP_TOP, H, W, H, GROUND, FPS)),
+                 'pad=%d:%d:(ow-iw)/2:0:color=%s,fps=%d,'
+                 'tpad=stop_mode=clone:stop_duration=%.2f,format=yuv420p'
+                 % (crop_h, CROP_TOP, H, W, H, GROUND, FPS, short_by + 0.5)),
          '-c:v', 'libx264', '-crf', '16', '-preset', 'slow', seg])
 
     # A ruler on the segment's own clock. Contact sheets cut straight from
