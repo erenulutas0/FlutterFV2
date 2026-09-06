@@ -80,6 +80,16 @@ CLIPS = {
         hook=('Bunu sen de diyorsun:', 'open the light'),
         gloss=(('open', 'açmak (kapı, kutu)'), ('turn on', 'açmak (ışık, TV)')),
     ),
+    'agree': dict(
+        src='klio_agree.mp4',
+        # The card lands at 18.7, read off the cut segment itself: a 4fps
+        # sheet of this file, even with an output-side seek, placed it two
+        # seconds early. The segment sheet build() writes is the only ruler
+        # that shares the overlay's clock.
+        start=16.4, end=24.6, lands=18.7,
+        hook=('Bunu sen de diyorsun:', 'I am agree'),
+        gloss=(('agree', 'fiil — "am" almaz'), ('I agree', 'katılıyorum')),
+    ),
 }
 
 
@@ -159,6 +169,15 @@ def build(name):
                  'pad=%d:%d:(ow-iw)/2:0:color=%s,fps=%d,format=yuv420p'
                  % (crop_h, CROP_TOP, H, W, H, GROUND, FPS)),
          '-c:v', 'libx264', '-crf', '16', '-preset', 'slow', seg])
+
+    # A ruler on the segment's own clock. Contact sheets cut straight from
+    # the raw file have disagreed with the segment by up to two seconds --
+    # screenrecord's timestamps jump where the screen sat still -- and the
+    # overlay below is timed against the segment, not the raw. Frame n of
+    # this sheet is n/4 seconds into the segment.
+    run(['ffmpeg', '-v', 'error', '-y', '-i', seg,
+         '-vf', 'fps=4,scale=216:-1,tile=8x5', '-frames:v', '1',
+         os.path.join(BUILD, name + '_seg_sheet.png')])
 
     # The gloss fades in half a second after the card, once the list has
     # finished scrolling to it.
