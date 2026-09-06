@@ -45,6 +45,128 @@ bırakıyoruz, sen o zamana kadar Reddit'te birkaç gerçek yorum yapmış olurs
 
 ---
 
+## Uzunluk hakkında
+
+Kısa gönderi kazanır. Reddit'in doğru yapısı **kısa gövde + derinlik
+yorumlarda**: ilk saatte gelen sorulara verdiğin cevaplar gönderiyi taşır,
+gövdeye tıkıştırdığın paragraflar değil.
+
+İki şeyi de yapma:
+
+- **Özellik listesi yazma.** "İşte uygulamam, işte özellikleri" Reddit'te
+  görmezden gelinen formattır — okuyucuya hiçbir şey vermez, sadece ister.
+- **Tanıtım videosunu gövdeye koyma.** Müzikli, kurgulu 20 saniye orada
+  reklam gibi okunur. Videonun yeri Twitter, TikTok ve YouTube. Reddit'te
+  görsel gerekiyorsa **ham ekran görüntüsü** koy; "yapımcı işini gösteriyor"
+  diye okunur.
+
+Aşağıdaki kısa metinler varsayılan. Uzun versiyonlar en altta duruyor — bir
+gönderi tutarsa ve "nasıl yaptın" diye sorarlarsa, oradaki malzemeyi
+**yorumda** kullan.
+
+---
+
+## Metin A (kısa) — yapımcı kitlesi
+
+**Başlık:**
+
+```
+I was about to ship pronunciation scoring. Reading my own code stopped me.
+```
+
+**Gövde:**
+
+```
+Solo dev. I've been building an English learning app for six months.
+
+Every competitor sells a pronunciation score, so I went to build one from
+Whisper's `avg_logprob` — how confident the model was in its own
+transcription. Three things stopped me:
+
+- Whisper gives no per-word confidence. A word object has `word`, `start`,
+  `end`. That's all. `avg_logprob` is per segment.
+- I found a comment I'd written months earlier in my own speech code: low
+  log-probability "fires on unusual accents." Every user of my app has one by
+  that model's standards. That's the whole point of the app.
+- Testing that afternoon I said "Hi Amy" to the tutor. It transcribed "Hi
+  Emi." A score would have reported that to the learner as their mistake.
+
+So I shipped pace and hesitation instead — computed from word timestamps that
+were already in the API response and being thrown away by my own client.
+
+https://play.google.com/store/apps/details?id=com.VocabMaster
+
+Genuine question: is showing someone "62 words/min" motivating or
+discouraging? I went back and forth for a day and still don't know.
+```
+
+Yaklaşık 170 kelime. Ne yaptığını anlatmıyor, **ne öğrendiğini** anlatıyor —
+ve okuyan biri uygulamayı hiç indirmese bile bir şey öğrenmiş oluyor. Reddit'te
+işe yarayan şey bu.
+
+---
+
+## Metin B (kısa) — öğrenen kitlesi
+
+**Başlık:**
+
+```
+Dictionary definitions never matched the sentence I was reading, so I built a reader that explains words in context
+```
+
+**Gövde:**
+
+```
+I'm the developer — saying that first so nobody has to wonder.
+
+The problem I started from: you hit a word you don't know, look it up, and get
+nine definitions of which one fits the sentence in front of you. Picking the
+right one takes the vocabulary you don't have yet. So the lookup teaches you
+least at exactly the moment you understand least.
+
+What I built: public-domain books — Sherlock Holmes, Aesop, Wilde — sorted by
+CEFR level. Tap a word and it's explained inside *that* sentence, one meaning,
+the one on the page. Tap again and it's saved with the sentence, and comes
+back for review on the day you're about to forget it.
+
+Free: reading, the word list, reviews, grammar. Paid: the AI parts, on a
+quota. No ads, no leaderboard, no streak that shames you.
+
+https://play.google.com/store/apps/details?id=com.VocabMaster
+
+Two things I'd like criticised:
+
+- Is an in-context definition actually better, or does it hide something you'd
+  want from a full entry?
+- Does reading 19th-century books help modern English, or am I teaching people
+  to speak like Conan Doyle?
+```
+
+Yaklaşık 180 kelime. İkinci soru gerçek bir eleştiriyi davet ediyor ve
+alacaksın — kütüphane kamu malı olduğu için hepsi eski metin. **Kendin sormak,
+birinin yorumlarda vurmasından iyidir**, ve cevabın hazır olmalı: seviyeye göre
+sıralı, ve kaydettiğin kelimeler modern konuşma pratiğinde geri geliyor.
+
+---
+
+## r/androidapps için
+
+Metin A'nın kısasını al, ilk üç maddeyi çıkar, yerine iki cümle koy:
+
+```
+I built an English app where you read whole public-domain books and tap any
+word to get its meaning inside that sentence — plus a tutor you can talk to
+out loud that corrects you by showing a better version of what you said.
+```
+
+Ve **iki ham ekran görüntüsü** ekle: `store/play/screenshot_en_03.png`
+(kapaklı kitaplık) ve `store/play/screenshot_en_01.png` (kafede sipariş).
+Mağaza rozeti değil, gerçek ekran.
+
+---
+
+## Uzun versiyonlar (yedek — yorumlarda kullan)
+
 ## Metin A — yapımcı kitlesi (r/SideProject, r/androidapps)
 
 Bu gönderi ürünü satmıyor, bir kararı anlatıyor. r/SideProject'te tutan şey
