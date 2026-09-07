@@ -1825,11 +1825,28 @@ class AppStateProvider extends ChangeNotifier {
       },
     ];
 
+    // The pool above is written in Turkish, because that is who the app
+    // launched for. Handing it unchanged to a learner reading in German is the
+    // bug the server side of this was just fixed for, and this list is the
+    // copy that runs with no network at all — the one nobody sees until it is
+    // the only thing on screen. Every entry keeps its English definition and
+    // example, which is what the card falls back to when no translation is
+    // present.
+    final bool keepTurkish = LocaleTextService.isTurkish;
     return List.generate(5, (index) {
-      final word = pool[(seed + index) % pool.length];
-      return Map<String, dynamic>.from(word);
+      final word = Map<String, dynamic>.from(pool[(seed + index) % pool.length]);
+      if (!keepTurkish) {
+        word.remove('translation');
+        word.remove('exampleTranslation');
+      }
+      return word;
     });
   }
+
+  /// The offline list, for a test that does not want to fake a network.
+  @visibleForTesting
+  List<Map<String, dynamic>> debugOfflineDailyWords(String dateKey) =>
+      _buildOfflineDailyWords(dateKey);
 
   /// Günün kelimelerini yenile
   Future<void> refreshDailyWords() async {

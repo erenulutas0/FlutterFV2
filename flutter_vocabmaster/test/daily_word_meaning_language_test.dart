@@ -45,6 +45,7 @@ void main() {
   });
 
   _cacheKeyTests();
+  _offlineFallbackTests();
 }
 
 /// The cached copy has to know which language it is.
@@ -71,5 +72,41 @@ void _cacheKeyTests() {
     LocaleTextService.setAppLocale(const Locale('PT', 'BR'));
 
     expect(AppStateProvider.dailyWordsCacheSchema(), first);
+  });
+}
+
+/// The list that runs with no network at all.
+///
+/// Its five words are written in Turkish, because that is who the app launched
+/// for. It is the copy nobody sees until it is the only thing on screen, and
+/// it was handing Turkish to every reader in every language — the same bug the
+/// server side was fixed for, in the one place a fix could not reach.
+void _offlineFallbackTests() {
+  test('a Turkish reader keeps the Turkish meanings offline', () {
+    LocaleTextService.setAppLocale(const Locale('tr'));
+
+    final List<Map<String, dynamic>> words =
+        AppStateProvider().debugOfflineDailyWords('2026-09-08');
+
+    expect(words, hasLength(5));
+    expect(words.first['translation'], isNotNull);
+  });
+
+  test('every other reader gets the English definition, not Turkish', () {
+    for (final String code in <String>['en', 'de', 'es', 'pt', 'it', 'fr']) {
+      LocaleTextService.setAppLocale(Locale(code));
+
+      final List<Map<String, dynamic>> words =
+          AppStateProvider().debugOfflineDailyWords('2026-09-08');
+
+      expect(words, hasLength(5));
+      for (final Map<String, dynamic> word in words) {
+        expect(word['translation'], isNull, reason: 'Turkish reached $code');
+        expect(word['exampleTranslation'], isNull, reason: 'for $code');
+        // Still usable offline: the card falls back to these.
+        expect(word['definition'], isNotNull, reason: 'for $code');
+        expect(word['word'], isNotNull, reason: 'for $code');
+      }
+    }
   });
 }

@@ -1788,6 +1788,33 @@ class _DailyWordsCard extends StatelessWidget {
       (pick['word'] ?? pick['englishWord'] ?? '').toString().trim();
 }
 
+/// The line printed under a daily word.
+///
+/// A translation when the server had one for this reader's language, the
+/// English definition when it did not, and the definition again when the
+/// "translation" is just the word back. The card printed rows reading
+/// "festival / festival" — in English, where the gloss is the word itself, and
+/// in Spanish and Portuguese, where the cognate is spelled the same — which is
+/// a line of type that teaches nothing and costs the reader a glance.
+///
+/// A top-level function rather than a method so the rule can be tested without
+/// standing up the page, its providers and its network.
+String dailyWordMeaning(Map<String, dynamic> pick) {
+  final String word =
+      (pick['word'] ?? pick['englishWord'] ?? '').toString().trim();
+  final String translation =
+      (pick['translation'] ?? pick['turkish'] ?? '').toString().trim();
+  final String definition = (pick['definition'] ?? '').toString().trim();
+
+  if (translation.isNotEmpty &&
+      translation.toLowerCase() != word.toLowerCase()) {
+    return translation;
+  }
+  // Empty rather than the word again: the card hides the line when there is
+  // nothing in it, and a blank is quieter than a repetition.
+  return definition;
+}
+
 class _DailyWordRow extends StatefulWidget {
   const _DailyWordRow({required this.pick, required this.alreadySaved});
 
@@ -1812,14 +1839,7 @@ class _DailyWordRowState extends State<_DailyWordRow> {
   /// Turkish meaning under it. Showing a definition instead is not a
   /// consolation prize: for a reader already in English it is the better
   /// gloss, and it is never a language they did not ask for.
-  String get _meaning {
-    final String translation =
-        (widget.pick['translation'] ?? widget.pick['turkish'] ?? '')
-            .toString()
-            .trim();
-    if (translation.isNotEmpty) return translation;
-    return (widget.pick['definition'] ?? '').toString().trim();
-  }
+  String get _meaning => dailyWordMeaning(widget.pick);
 
   Future<void> _add() async {
     if (_busy || widget.alreadySaved) return;
