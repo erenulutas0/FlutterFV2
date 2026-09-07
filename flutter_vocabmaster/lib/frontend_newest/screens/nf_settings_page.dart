@@ -180,7 +180,95 @@ class NfSettingsPage extends StatelessWidget {
             behavior: SnackBarBehavior.floating,
           ),
         );
+        if (!context.mounted) return;
+        await _offerMatchingExplanationLanguage(context, code);
       },
+    );
+  }
+
+  /// Ask whether the tutor should change language too.
+  ///
+  /// There are two language settings and they can disagree: the interface, and
+  /// the language the AI explains mistakes in. A learner who switched the app to
+  /// English got English menus and Turkish corrections, because the stored
+  /// learning profile was written once and never moved again. Nothing on screen
+  /// said the second setting existed, so the app simply looked half-translated.
+  ///
+  /// Asked rather than synced silently. "App in English, explanations in my own
+  /// language" is a real way to study, and a setting the learner did not touch
+  /// should not change under them. One tap either way, and it is only asked when
+  /// the two actually disagree.
+  Future<void> _offerMatchingExplanationLanguage(
+    BuildContext context,
+    String code,
+  ) async {
+    final LearningLanguageProvider learning =
+        context.read<LearningLanguageProvider>();
+    final String implied =
+        LearningLanguageService.normalizeSupported(code, 'English');
+    if (implied == learning.sourceLanguage) return;
+
+    // Every string here is read from the language just chosen, not from the
+    // context, which still holds the old one until the tree rebuilds. Asking
+    // "shall I switch to English?" in Turkish is the confusion this is meant
+    // to end, not repeat.
+    final AppLocalizations l10n = AppLocalizations(Locale(code));
+    String name(String language) {
+      final String? key = AppLocalizations.languageNameKey(language);
+      return key == null ? language : l10n.t(key);
+    }
+
+    final String newName = name(implied);
+    final String currentName = name(learning.sourceLanguage);
+    String fill(String key) => l10n
+        .t(key)
+        .replaceAll('{new}', newName)
+        .replaceAll('{current}', currentName);
+
+    final NfTokens t = NfTokens.of(context);
+    final bool? switchIt = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        backgroundColor: t.surface,
+        title: Text(
+          fill('settings.learning.matchPrompt.title'),
+          style: NfTokens.display(size: NfFont.s17, color: t.ink),
+        ),
+        content: Text(
+          fill('settings.learning.matchPrompt.body'),
+          style: NfTokens.body(size: NfFont.s135, color: t.inkMuted),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(
+              fill('settings.learning.matchPrompt.keep'),
+              style: NfTokens.body(size: NfFont.s135, color: t.inkMuted),
+            ),
+          ),
+          TextButton(
+            key: const ValueKey('settings-match-language-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(
+              fill('settings.learning.matchPrompt.confirm'),
+              style: NfTokens.body(
+                size: NfFont.s135,
+                weight: NfTokens.bodyEmphasisWeight,
+                color: t.primaryText,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (switchIt != true) return;
+
+    await learning.selectSourceLanguage(implied);
+    await AnalyticsService.logLearningProfileUpdated(
+      sourceLanguage: learning.sourceLanguage,
+      englishLevel: learning.englishLevel,
+      learningGoal: learning.learningGoal,
+      source: 'app_language_match',
     );
   }
 
