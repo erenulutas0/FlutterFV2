@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -296,5 +297,74 @@ class DailyWordsServiceTest {
         } catch (java.lang.reflect.InvocationTargetException e) {
             throw (Exception) e.getCause();
         }
+    }
+
+    // --- one language per cache row -------------------------------------------
+    //
+    // The five words were generated once a day against the default profile and
+    // handed to everyone, so a learner who switched the app to English read an
+    // English word with a Turkish meaning under it. These pin the key that fixed
+    // it, and the one property that must not change with it: Turkish keeps the
+    // bare key, so no row already written is orphaned and no day is paid twice.
+
+    @Test
+    void contentTypeFor_ShouldLeaveTurkishOnTheOriginalKey() {
+        assertEquals("daily_words_v3", DailyWordsService.contentTypeFor("Turkish"));
+        // What a client too old to send a language asks for.
+        assertEquals("daily_words_v3", DailyWordsService.contentTypeFor(null));
+        assertEquals("daily_words_v3", DailyWordsService.contentTypeFor("  "));
+        // And anything the profile does not support falls back the same way.
+        assertEquals("daily_words_v3", DailyWordsService.contentTypeFor("Klingon"));
+    }
+
+    @Test
+    void contentTypeFor_ShouldGiveEveryOtherLanguageItsOwnRow() {
+        assertEquals("daily_words_v3:german", DailyWordsService.contentTypeFor("German"));
+        assertEquals("daily_words_v3:english", DailyWordsService.contentTypeFor("English"));
+        assertEquals("daily_words_v3:spanish", DailyWordsService.contentTypeFor("Spanish"));
+        // The column is varchar(50); the longest supported name has to fit.
+        assertTrue(DailyWordsService.contentTypeFor("Portuguese").length() <= 50);
+    }
+
+    @Test
+    void getDailyWords_ShouldReadAndWriteTheRowForTheAskedLanguage() {
+        LocalDate date = LocalDate.of(2026, 9, 8);
+        when(dailyContentRepository.findByContentDateAndContentType(eq(date), eq("daily_words_v3:german")))
+                .thenReturn(Optional.of(new DailyContent(
+                        date,
+                        "daily_words_v3:german",
+                        "{\"words\":[{\"word\":\"resilient\",\"translation\":\"widerstandsfähig\"}]}")));
+
+        List<Map<String, Object>> words = dailyWordsService.getDailyWords(date, "German");
+
+        assertEquals(1, words.size());
+        assertEquals("widerstandsfähig", words.get(0).get("translation"));
+        // The Turkish row is a different row and must not be consulted for it.
+        verify(dailyContentRepository, never())
+                .findByContentDateAndContentType(eq(date), eq("daily_words_v3"));
+    }
+
+    @Test
+    void getDailyWords_ShouldDropTurkishFromTheCannedSetForOtherLanguages() {
+        // Groq unreachable: the fallback list is written in Turkish, and handing
+        // it unchanged to a German reader is the very bug being fixed.
+        ReflectionTestUtils.setField(dailyWordsService, "groqApiKey", "");
+        LocalDate date = LocalDate.of(2026, 9, 8);
+        when(dailyContentRepository.findByContentDateAndContentType(any(LocalDate.class), any()))
+                .thenReturn(Optional.empty());
+
+        List<Map<String, Object>> german = dailyWordsService.getDailyWords(date, "German");
+        List<Map<String, Object>> turkish = dailyWordsService.getDailyWords(date, "Turkish");
+
+        assertTrue(german.size() >= 5);
+        for (Map<String, Object> word : german) {
+            assertNull(word.get("translation"), "a Turkish gloss reached a German reader");
+            assertNull(word.get("exampleTranslation"));
+            // Still usable: the client falls back to the English definition.
+            assertNotNull(word.get("definition"));
+            assertNotNull(word.get("word"));
+        }
+        // Turkish readers keep the meanings they had.
+        assertNotNull(turkish.get(0).get("translation"));
     }
 }

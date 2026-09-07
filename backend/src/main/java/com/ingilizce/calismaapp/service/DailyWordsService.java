@@ -35,6 +35,33 @@ public class DailyWordsService {
     private static final String PREVIOUS_CONTENT_TYPE = "daily_words_v2";
     private static final String LEGACY_CONTENT_TYPE = "daily_words_v1";
 
+    /**
+     * The row a language's five words live in.
+     *
+     * <p>One set was generated per day, with the default profile, and served to
+     * everyone: a learner reading the app in English or German got the English
+     * word with its Turkish meaning underneath. The words are now generated once
+     * per language, lazily, so only languages somebody actually opens cost a call.
+     *
+     * <p>Turkish deliberately keeps the bare {@code daily_words_v3} key. It is
+     * what every row already written uses and what every client that does not
+     * send a language will ask for, so nothing already generated is orphaned and
+     * no day is paid for twice.
+     */
+    static String contentTypeFor(String sourceLanguage) {
+        String normalized = LearningLanguageProfile
+                .of(sourceLanguage, "English", sourceLanguage)
+                .sourceLanguage();
+        if (DEFAULT_SOURCE_LANGUAGE.equals(normalized)) {
+            return CONTENT_TYPE;
+        }
+        // varchar(50); the longest of these is "daily_words_v3:portuguese" at 25.
+        return CONTENT_TYPE + ":" + normalized.toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static final String DEFAULT_SOURCE_LANGUAGE =
+            LearningLanguageProfile.defaultProfile().sourceLanguage();
+
     private final DailyContentRepository dailyContentRepository;
     private final AiCompletionProvider aiCompletionProvider;
     private final ObjectMapper objectMapper;
@@ -55,16 +82,28 @@ public class DailyWordsService {
     }
 
     public List<Map<String, Object>> getDailyWords(LocalDate date) {
+        return getDailyWords(date, DEFAULT_SOURCE_LANGUAGE);
+    }
+
+    /**
+     * @param sourceLanguage the language the meanings should be written in; an
+     *     unsupported or absent value falls back to the default, which keeps
+     *     older clients on exactly the payload they had.
+     */
+    public List<Map<String, Object>> getDailyWords(LocalDate date, String sourceLanguage) {
         LocalDate normalized = date != null ? date : LocalDate.now();
+        LearningLanguageProfile profile = LearningLanguageProfile
+                .of(sourceLanguage, "English", sourceLanguage);
+        String contentType = contentTypeFor(profile.sourceLanguage());
 
         Optional<DailyContent> cached = dailyContentRepository
-                .findByContentDateAndContentType(normalized, CONTENT_TYPE);
+                .findByContentDateAndContentType(normalized, contentType);
         if (cached.isPresent()) {
             return decodeWordsList(cached.get().getPayloadJson());
         }
 
         synchronized (generationLock) {
-            cached = dailyContentRepository.findByContentDateAndContentType(normalized, CONTENT_TYPE);
+            cached = dailyContentRepository.findByContentDateAndContentType(normalized, contentType);
             if (cached.isPresent()) {
                 return decodeWordsList(cached.get().getPayloadJson());
             }
@@ -78,11 +117,11 @@ public class DailyWordsService {
                 // attempt is one extra call on a path that already only runs once a day.
                 for (int attempt = 1; attempt <= 2 && payloadJson == null; attempt++) {
                     try {
-                        payloadJson = generateDailyWordsPayload(normalized);
+                        payloadJson = generateDailyWordsPayload(normalized, profile);
                     } catch (Exception e) {
                         // Do not persist failures; allow future retries when Groq recovers.
-                        log.warn("Daily words generation attempt {}/2 failed for date={}: {}",
-                                attempt, normalized, e.toString());
+                        log.warn("Daily words generation attempt {}/2 failed for date={}, language={}: {}",
+                                attempt, normalized, profile.sourceLanguage(), e.toString());
                     }
                 }
             } else {
@@ -90,11 +129,11 @@ public class DailyWordsService {
             }
 
             if (payloadJson == null || payloadJson.isBlank()) {
-                return fallbackWords(normalized);
+                return fallbackWords(normalized, profile.sourceLanguage());
             }
 
             try {
-                dailyContentRepository.save(new DailyContent(normalized, CONTENT_TYPE, payloadJson));
+                dailyContentRepository.save(new DailyContent(normalized, contentType, payloadJson));
             } catch (DataIntegrityViolationException ignored) {
                 // Another concurrent request may have inserted; fetch and use it.
             }
@@ -111,9 +150,14 @@ public class DailyWordsService {
      * seen.
      */
     public String generateDailyWordsPayload(LocalDate date) throws Exception {
-        LearningLanguageProfile profile = LearningLanguageProfile.defaultProfile();
+        return generateDailyWordsPayload(date, LearningLanguageProfile.defaultProfile());
+    }
+
+    public String generateDailyWordsPayload(LocalDate date, LearningLanguageProfile profile)
+            throws Exception {
         String topicCategory = PromptCatalog.topicForDay(date.getDayOfYear());
-        Set<String> excludeWords = recentDailyWords(date.minusDays(30), date.minusDays(1));
+        Set<String> excludeWords = recentDailyWords(
+                contentTypeFor(profile.sourceLanguage()), date.minusDays(30), date.minusDays(1));
         String excludeWordsCsv = excludeWords.isEmpty()
                 ? "none"
                 : excludeWords.stream().limit(80).collect(Collectors.joining(", "));
@@ -231,11 +275,15 @@ public class DailyWordsService {
         return objectMapper.writeValueAsString(node);
     }
 
-    private Set<String> recentDailyWords(LocalDate startDate, LocalDate endDate) {
+    private Set<String> recentDailyWords(String contentType, LocalDate startDate, LocalDate endDate) {
         Set<String> words = new LinkedHashSet<>();
-        collectWordsFromRecentContent(words, CONTENT_TYPE, startDate, endDate);
-        collectWordsFromRecentContent(words, PREVIOUS_CONTENT_TYPE, startDate, endDate);
-        collectWordsFromRecentContent(words, LEGACY_CONTENT_TYPE, startDate, endDate);
+        collectWordsFromRecentContent(words, contentType, startDate, endDate);
+        if (CONTENT_TYPE.equals(contentType)) {
+            // Only Turkish has a history under the older keys; a language added
+            // today has nothing to avoid repeating yet.
+            collectWordsFromRecentContent(words, PREVIOUS_CONTENT_TYPE, startDate, endDate);
+            collectWordsFromRecentContent(words, LEGACY_CONTENT_TYPE, startDate, endDate);
+        }
         return words;
     }
 
@@ -402,6 +450,32 @@ public class DailyWordsService {
         } catch (Exception e) {
             return List.of();
         }
+    }
+
+    /**
+     * The canned set, in a language the reader can actually read.
+     *
+     * <p>The lists below are written in Turkish, because that is who the app
+     * launched for. Handing them unchanged to a learner reading in German is the
+     * same bug this class was just fixed for, so for any other language the
+     * Turkish fields are dropped: every entry still carries an English
+     * definition and example, and the client shows those when no translation is
+     * present. Fewer words of help, but none of them in a language the reader
+     * did not ask for.
+     */
+    private List<Map<String, Object>> fallbackWords(LocalDate date, String sourceLanguage) {
+        List<Map<String, Object>> words = fallbackWords(date);
+        if (DEFAULT_SOURCE_LANGUAGE.equals(sourceLanguage)) {
+            return words;
+        }
+        List<Map<String, Object>> stripped = new ArrayList<>(words.size());
+        for (Map<String, Object> word : words) {
+            Map<String, Object> copy = new java.util.LinkedHashMap<>(word);
+            copy.remove("translation");
+            copy.remove("exampleTranslation");
+            stripped.add(copy);
+        }
+        return stripped;
     }
 
     private List<Map<String, Object>> fallbackWords(LocalDate date) {

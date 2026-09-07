@@ -10,6 +10,7 @@ import '../models/sentence_practice.dart';
 import '../config/app_config.dart';
 import 'analytics_service.dart';
 import 'auth_service.dart';
+import 'locale_text_service.dart';
 import 'learning_language_service.dart';
 
 class ApiService {
@@ -870,7 +871,14 @@ class ApiService {
       final url = await baseUrl;
       final response = await _withProtectedRetry(
         (headers) => client.get(
-          Uri.parse('$url/content/daily-words'),
+          // The language decides the meanings, so it is part of what is being
+          // asked for, not a header. Without it the server hands back the
+          // default set, which is Turkish.
+          Uri.parse('$url/content/daily-words').replace(
+            queryParameters: <String, String>{
+              'lang': LocaleTextService.nativeLanguageName,
+            },
+          ),
           headers: headers,
         ),
       );

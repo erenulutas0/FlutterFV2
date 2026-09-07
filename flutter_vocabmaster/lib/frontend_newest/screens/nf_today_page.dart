@@ -1802,10 +1802,24 @@ class _DailyWordRowState extends State<_DailyWordRow> {
   bool _busy = false;
 
   String get _english => _DailyWordsCard._englishOf(widget.pick);
-  String get _translation =>
-      (widget.pick['translation'] ?? widget.pick['turkish'] ?? '')
-          .toString()
-          .trim();
+
+  /// The line under the word.
+  ///
+  /// A translation when the server had one for this reader's language, and the
+  /// English definition when it did not. The card used to print `translation`
+  /// unconditionally, and that field was generated in Turkish for everyone —
+  /// so a learner who switched the app to English read an English word with a
+  /// Turkish meaning under it. Showing a definition instead is not a
+  /// consolation prize: for a reader already in English it is the better
+  /// gloss, and it is never a language they did not ask for.
+  String get _meaning {
+    final String translation =
+        (widget.pick['translation'] ?? widget.pick['turkish'] ?? '')
+            .toString()
+            .trim();
+    if (translation.isNotEmpty) return translation;
+    return (widget.pick['definition'] ?? '').toString().trim();
+  }
 
   Future<void> _add() async {
     if (_busy || widget.alreadySaved) return;
@@ -1813,7 +1827,9 @@ class _DailyWordRowState extends State<_DailyWordRow> {
     try {
       await context.read<AppStateProvider>().addWord(
             english: _english,
-            turkish: _translation,
+            // Whatever the row showed. Saving the empty `translation` would put
+            // a word in the deck with no meaning at all on it.
+            turkish: _meaning,
             addedDate: DateTime.now(),
             difficulty: (widget.pick['difficulty'] ?? 'medium').toString(),
             source: WordOrigins.dailyWords,
@@ -1840,9 +1856,9 @@ class _DailyWordRowState extends State<_DailyWordRow> {
                   color: t.ink,
                 ),
               ),
-              if (_translation.isNotEmpty)
+              if (_meaning.isNotEmpty)
                 Text(
-                  _translation,
+                  _meaning,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: NfTokens.body(size: NfFont.s125, color: t.inkMuted),

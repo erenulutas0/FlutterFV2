@@ -41,9 +41,15 @@ public class DailyContentController {
         this.userRepository = userRepository;
     }
 
+    /**
+     * @param lang the language to write the meanings in, sent by the client as the
+     *     language the app itself is being read in. Absent or unsupported falls back
+     *     to the default, which is what every build before this one gets.
+     */
     @GetMapping("/daily-words")
-    public ResponseEntity<Map<String, Object>> getDailyWords() {
-        var words = dailyWordsService.getDailyWords(LocalDate.now(ZoneOffset.UTC));
+    public ResponseEntity<Map<String, Object>> getDailyWords(
+            @RequestParam(name = "lang", required = false) String lang) {
+        var words = dailyWordsService.getDailyWords(LocalDate.now(ZoneOffset.UTC), lang);
         return ResponseEntity.ok(Map.of(
                 "success", true,
                 "words", words
