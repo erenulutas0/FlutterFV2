@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../providers/app_state_provider.dart';
@@ -501,6 +502,30 @@ class _NfSubscriptionPageState extends State<NfSubscriptionPage> {
     }
   }
 
+  /// Where a promo code actually goes.
+  ///
+  /// Google redeems subscription promo codes in the Play Store and nowhere else
+  /// — there is no billing API an app can call with a code. Until this the app
+  /// said nothing about that, so a code handed to a learner had no visible home
+  /// and simply went unused. The row states the rule and opens the page.
+  static final Uri _playRedeemUri = Uri.parse('https://play.google.com/redeem');
+
+  Future<void> _openPromoRedemption() async {
+    // externalApplication so Android hands this to the Play Store app rather
+    // than an in-app webview, where a signed-in redeem flow does not work.
+    bool opened;
+    try {
+      opened = await launchUrl(
+        _playRedeemUri,
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      opened = false;
+    }
+    if (!mounted || opened) return;
+    _showSnack(context.tr('subscription.promo.err'), warning: true);
+  }
+
   /// One snackbar shape for the whole screen. Warning states are amber and
   /// errors are red — the same two semantic tokens the rest of the frontend
   /// uses for them.
@@ -737,6 +762,35 @@ class _NfSubscriptionPageState extends State<NfSubscriptionPage> {
             onPressed:
                 _isPurchasing ? null : () => unawaited(_restorePurchases()),
           ),
+          // Below restore, because it is rarer than either: most learners buy,
+          // some reinstall, a few arrive holding a code. It is here at all
+          // because there was nowhere else in the app to look for it.
+          if (Platform.isAndroid) ...<Widget>[
+            const SizedBox(height: NfSpace.s16),
+            GestureDetector(
+              key: const ValueKey('paywall-promo-cta'),
+              behavior: HitTestBehavior.opaque,
+              onTap: () => unawaited(_openPromoRedemption()),
+              child: Column(
+                children: <Widget>[
+                  Text(
+                    context.tr('subscription.promo.cta'),
+                    textAlign: TextAlign.center,
+                    style: NfTokens.body(
+                      size: NfFont.s135,
+                      color: t.primaryText,
+                    ),
+                  ),
+                  const SizedBox(height: NfSpace.s4),
+                  Text(
+                    context.tr('subscription.promo.note'),
+                    textAlign: TextAlign.center,
+                    style: NfTokens.body(size: NfFont.s12, color: t.inkFaint),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ],
     );

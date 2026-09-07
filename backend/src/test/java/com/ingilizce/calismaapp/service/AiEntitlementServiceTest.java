@@ -1,6 +1,7 @@
 package com.ingilizce.calismaapp.service;
 
 import com.ingilizce.calismaapp.config.AiTokenQuotaProperties;
+import com.ingilizce.calismaapp.config.ComplimentaryAccessProperties;
 import com.ingilizce.calismaapp.entity.User;
 import com.ingilizce.calismaapp.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +25,7 @@ class AiEntitlementServiceTest {
     private UserRepository userRepository;
 
     private AiEntitlementService aiEntitlementService;
+    private ComplimentaryAccessProperties complimentaryAccess;
 
     @BeforeEach
     void setUp() {
@@ -33,7 +35,11 @@ class AiEntitlementServiceTest {
         properties.setFreeDailyTokenQuotaPerUser(1_500);
         properties.setPremiumDailyTokenQuotaPerUser(30_000);
         properties.setPremiumPlusDailyTokenQuotaPerUser(60_000);
-        aiEntitlementService = new AiEntitlementService(userRepository, properties);
+        // Empty by default: every existing test below describes an account that is not
+        // on the list, which is every account in production but a couple of testers.
+        complimentaryAccess = new ComplimentaryAccessProperties();
+        aiEntitlementService =
+                new AiEntitlementService(userRepository, properties, complimentaryAccess);
     }
 
     @Test
@@ -113,5 +119,81 @@ class AiEntitlementServiceTest {
         assertEquals(AiPlanTier.PREMIUM, entitlement.planTier());
         assertTrue(entitlement.aiAccessEnabled());
         assertEquals(30_000, entitlement.dailyTokenLimit());
+    }
+
+    // --- complimentary access ------------------------------------------------------
+    //
+    // The developer's own account kept falling to FREE mid-session: the licence-tester
+    // subscription it relied on expires in minutes, and reconciliation writes the end
+    // date back to now on its next half-hourly run. These pin that the list holds in
+    // exactly that state, and that it reaches nobody else.
+
+    @Test
+    void resolve_ShouldGrantPaidTier_WhenListedEvenWithNoSubscriptionAndTrialGone() {
+        complimentaryAccess.setEmails(java.util.List.of("beta@klioai.com"));
+        User user = new User();
+        user.setEmail("beta@klioai.com");
+        user.setAiPlanCode("FREE");
+        user.setTrialEligible(false);
+        user.setCreatedAt(LocalDateTime.now().minusDays(200));
+        // What a reconciliation downgrade leaves behind.
+        user.setSubscriptionEndDate(LocalDateTime.now().minusMinutes(1));
+        when(userRepository.findById(9L)).thenReturn(Optional.of(user));
+
+        AiEntitlementService.Entitlement entitlement = aiEntitlementService.resolve(9L);
+
+        assertEquals(AiPlanTier.PREMIUM_PLUS, entitlement.planTier());
+        assertEquals(60_000, entitlement.dailyTokenLimit());
+        assertFalse(entitlement.trialActive());
+    }
+
+    @Test
+    void resolve_ShouldHonourConfiguredPlan_WhenListAsksForPremium() {
+        complimentaryAccess.setEmails(java.util.List.of("beta@klioai.com"));
+        complimentaryAccess.setPlan("PREMIUM");
+        User user = new User();
+        user.setEmail("beta@klioai.com");
+        user.setCreatedAt(LocalDateTime.now().minusDays(200));
+        when(userRepository.findById(10L)).thenReturn(Optional.of(user));
+
+        assertEquals(AiPlanTier.PREMIUM, aiEntitlementService.resolve(10L).planTier());
+    }
+
+    @Test
+    void resolve_ShouldMatchRegardlessOfCaseAndSurroundingSpace() {
+        // Addresses arrive from Google sign-in in whatever case the account has, and
+        // an env var is typed by hand. Neither should decide whether this works.
+        complimentaryAccess.setEmails(java.util.List.of("  Beta@KlioAI.com  "));
+        User user = new User();
+        user.setEmail("BETA@klioai.COM");
+        user.setCreatedAt(LocalDateTime.now().minusDays(200));
+        when(userRepository.findById(11L)).thenReturn(Optional.of(user));
+
+        assertEquals(AiPlanTier.PREMIUM_PLUS, aiEntitlementService.resolve(11L).planTier());
+    }
+
+    @Test
+    void resolve_ShouldLeaveEveryoneElseOnTheirOwnTier() {
+        complimentaryAccess.setEmails(java.util.List.of("beta@klioai.com"));
+        User user = new User();
+        user.setEmail("someone.else@example.com");
+        user.setTrialEligible(false);
+        user.setCreatedAt(LocalDateTime.now().minusDays(200));
+        when(userRepository.findById(12L)).thenReturn(Optional.of(user));
+
+        // The list is not a back door: a paying product needs everyone off it to pay.
+        assertEquals(AiPlanTier.FREE, aiEntitlementService.resolve(12L).planTier());
+        assertEquals(1_500, aiEntitlementService.resolve(12L).dailyTokenLimit());
+    }
+
+    @Test
+    void resolve_ShouldGrantNothing_WhenListIsEmptyAndEmailIsNull() {
+        // Production before this feature is configured, and legacy rows with no email.
+        User user = new User();
+        user.setTrialEligible(false);
+        user.setCreatedAt(LocalDateTime.now().minusDays(200));
+        when(userRepository.findById(13L)).thenReturn(Optional.of(user));
+
+        assertEquals(AiPlanTier.FREE, aiEntitlementService.resolve(13L).planTier());
     }
 }

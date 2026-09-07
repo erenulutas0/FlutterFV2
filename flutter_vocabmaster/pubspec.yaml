@@ -53,6 +53,11 @@ dependencies:
   firebase_messaging: ^16.0.0
   in_app_review: ^2.0.10
   package_info_plus: ^9.0.0
+  # Already in the tree transitively, and its Android implementation is already
+  # pinned below and compiled in. Named here so the paywall can open Play's
+  # redeem page: a promo code cannot be entered anywhere else, and until this
+  # the app never said so.
+  url_launcher: 6.3.2
   flutter_local_notifications: 17.2.4
   timezone: ^0.9.4
   flutter_timezone: ^5.1.0

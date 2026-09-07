@@ -197,14 +197,11 @@ class SubscriptionService {
       final lower = e.toString().toLowerCase();
       if (lower.contains('already') && lower.contains('owned')) {
         try {
-          await syncOwnedPurchases(force: true);
-          onPurchaseError?.call(_text(
-            'Mevcut mağaza aboneliği bulundu, hesabiniza aktarılıyor...',
-            'An existing store subscription was found and is being restored to your account...',
-          ));
+          _reportAlreadyOwned(await syncOwnedPurchases(force: true));
           return false;
         } catch (_) {
-          // fall through to generic error reporting below
+          _reportAlreadyOwned(false);
+          return false;
         }
       }
       final mapped = _mapRawPlayError(e.toString());
@@ -212,9 +209,12 @@ class SubscriptionService {
         onPurchaseError?.call(mapped);
         return false;
       }
+      // Deliberately without the exception text. Pasting it here is what put
+      // "BillingResponse.itemAlreadyOwned" on screen in red, under a dialog
+      // that had already said the same thing in words.
       onPurchaseError?.call(_text(
-        'Satın alma başlatılamadı: $e',
-        'The purchase could not be started: $e',
+        'Satın alma başlatılamadı. Lütfen biraz sonra tekrar dene.',
+        'The purchase could not be started. Please try again shortly.',
       ));
       return false;
     }
@@ -228,16 +228,9 @@ class SubscriptionService {
         final alreadyOwned = _isAlreadyOwnedError(purchaseDetails.error);
         if (alreadyOwned) {
           try {
-            await syncOwnedPurchases(force: true);
-            onPurchaseError?.call(_text(
-              'Mevcut mağaza aboneliği bulundu, hesabiniza aktarılıyor...',
-              'An existing store subscription was found and is being restored to your account...',
-            ));
-          } catch (e) {
-            onPurchaseError?.call(_text(
-              'Mevcut abonelik geri yüklenemedi: $e',
-              'The existing subscription could not be restored: $e',
-            ));
+            _reportAlreadyOwned(await syncOwnedPurchases(force: true));
+          } catch (_) {
+            _reportAlreadyOwned(false);
           }
         } else {
           final mapped = _mapPlayStoreError(purchaseDetails.error);
@@ -256,10 +249,19 @@ class SubscriptionService {
 
         if (verified) {
           _lastVerificationError = null;
-          onPurchaseSuccess?.call(_text(
-            'Aboneliğiniz başarıyla aktifleştirildi.',
-            'Your subscription was activated successfully.',
-          ));
+          // A restore is not a purchase, and saying "activated" for one is what
+          // congratulated the buyer of a plan they already had.
+          onPurchaseSuccess?.call(
+            purchaseDetails.status == PurchaseStatus.restored
+                ? _text(
+                    'Aboneliğin hesabına bağlandı.',
+                    'Your subscription is linked to this account.',
+                  )
+                : _text(
+                    'Aboneliğiniz başarıyla aktifleştirildi.',
+                    'Your subscription was activated successfully.',
+                  ),
+          );
         } else {
           onPurchaseError?.call(
             _lastVerificationError ??
@@ -396,6 +398,27 @@ class SubscriptionService {
     }
   }
 
+  /// What to say when Play refuses a purchase because the account already has it.
+  ///
+  /// Not an error, and it used to be reported as three at once: a red dialog
+  /// ("aboneliğiniz zaten var"), a congratulation from the restore this same
+  /// path kicks off, and a persistent banner carrying the raw
+  /// `BillingResponse.itemAlreadyOwned`. One tap, three messages, two of them
+  /// contradicting each other.
+  ///
+  /// When a restore did start, the recovered purchase comes back through this
+  /// same stream as [PurchaseStatus.restored] and is reported there, once — so
+  /// this stays quiet. It speaks only when there is nothing else to report.
+  void _reportAlreadyOwned(bool restoreStarted) {
+    if (restoreStarted) {
+      return;
+    }
+    onPurchaseError?.call(_text(
+      'Bu plana zaten abonesin. Play Store > Ödemeler ve abonelikler bölümünden görebilirsin.',
+      'You are already subscribed to this plan. See it in Play Store > Payments & subscriptions.',
+    ));
+  }
+
   bool _isAlreadyOwnedError(IAPError? error) {
     if (error == null) {
       return false;
@@ -446,9 +469,11 @@ class SubscriptionService {
     }
     if (lower.contains('itemalreadyowned') ||
         lower.contains('item_already_owned')) {
+      // Same sentence _reportAlreadyOwned uses. Two wordings for one situation
+      // is how the buyer of an owned plan ended up reading three messages.
       return _text(
-        'Mevcut mağaza aboneliği bulundu. Satın alımlarınız hesabiniza aktarılıyor.',
-        'An existing store subscription was found. Your purchases are being restored to your account.',
+        'Bu plana zaten abonesin. Play Store > Ödemeler ve abonelikler bölümünden görebilirsin.',
+        'You are already subscribed to this plan. See it in Play Store > Payments & subscriptions.',
       );
     }
     return null;
@@ -462,6 +487,11 @@ class SubscriptionService {
   @visibleForTesting
   String? debugMapRawPlayError(String rawError) {
     return _mapRawPlayError(rawError);
+  }
+
+  @visibleForTesting
+  void debugReportAlreadyOwned(bool restoreStarted) {
+    _reportAlreadyOwned(restoreStarted);
   }
 
   Future<int?> _resolveUserIdForPurchase() async {

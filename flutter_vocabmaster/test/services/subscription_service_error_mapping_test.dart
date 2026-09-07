@@ -31,13 +31,38 @@ void main() {
       expect(message!.toLowerCase(), contains('try again'));
     });
 
-    test('maps already-owned raw Play error to restore-in-progress guidance',
-        () {
+    test('says already-subscribed in words, never the billing constant', () {
       final message = service.debugMapRawPlayError('ITEM_ALREADY_OWNED');
 
       expect(message, isNotNull);
-      expect(message!.toLowerCase(), contains('existing store subscription'));
-      expect(message.toLowerCase(), contains('restored'));
+      expect(message!.toLowerCase(), contains('already subscribed'));
+      // Tapping a plan the account owns used to leave a red banner reading
+      // "BillingResponse.itemAlreadyOwned" on screen, and it followed the
+      // reader onto other pages.
+      expect(message.toLowerCase(), isNot(contains('billingresponse')));
+      expect(message.toLowerCase(), isNot(contains('item_already_owned')));
+    });
+
+    test('a started restore reports nothing; the restore itself will', () {
+      // One tap on an owned plan produced an error dialog, a congratulation
+      // and a raw code. The restore this path starts comes back through the
+      // purchase stream as `restored` and is reported there, once.
+      final List<String> reported = <String>[];
+      service.onPurchaseError = reported.add;
+
+      service.debugReportAlreadyOwned(true);
+
+      expect(reported, isEmpty);
+    });
+
+    test('speaks only when no restore started, so it cannot go silent', () {
+      final List<String> reported = <String>[];
+      service.onPurchaseError = reported.add;
+
+      service.debugReportAlreadyOwned(false);
+
+      expect(reported, hasLength(1));
+      expect(reported.single.toLowerCase(), contains('already subscribed'));
     });
 
     test('maps structured IAP PG-GEMF-02 error', () {

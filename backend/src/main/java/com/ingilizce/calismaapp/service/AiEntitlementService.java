@@ -1,6 +1,7 @@
 package com.ingilizce.calismaapp.service;
 
 import com.ingilizce.calismaapp.config.AiTokenQuotaProperties;
+import com.ingilizce.calismaapp.config.ComplimentaryAccessProperties;
 import com.ingilizce.calismaapp.entity.User;
 import com.ingilizce.calismaapp.repository.UserRepository;
 import org.springframework.stereotype.Service;
@@ -23,11 +24,14 @@ public class AiEntitlementService {
 
     private final UserRepository userRepository;
     private final AiTokenQuotaProperties quotaProperties;
+    private final ComplimentaryAccessProperties complimentaryAccess;
 
     public AiEntitlementService(UserRepository userRepository,
-                                AiTokenQuotaProperties quotaProperties) {
+                                AiTokenQuotaProperties quotaProperties,
+                                ComplimentaryAccessProperties complimentaryAccess) {
         this.userRepository = userRepository;
         this.quotaProperties = quotaProperties;
+        this.complimentaryAccess = complimentaryAccess;
     }
 
     public Entitlement resolve(Long userId) {
@@ -38,6 +42,17 @@ public class AiEntitlementService {
         User user = userRepository.findById(userId).orElse(null);
         if (user == null) {
             return buildForTier(AiPlanTier.FREE, false, 0);
+        }
+
+        // Checked before the subscription, because the whole point of the list is to
+        // hold for accounts whose subscription record keeps lapsing -- a licence-tester
+        // purchase that expires in minutes, a reconciliation run that then writes the
+        // end date back to now. Neither can reach this.
+        if (complimentaryAccess.covers(user.getEmail())) {
+            return buildForTier(
+                    AiPlanTier.fromUserPlanCode(complimentaryAccess.getPlan()),
+                    false,
+                    0);
         }
 
         if (user.isSubscriptionActive()) {
