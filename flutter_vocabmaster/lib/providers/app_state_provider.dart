@@ -205,6 +205,17 @@ class AppStateProvider extends ChangeNotifier {
 
   List<Word> get allWords => _allWords;
   List<SentenceViewModel> get allSentences => _allSentences;
+  /// What the cached daily words are cached *as*.
+  ///
+  /// The language belongs in here, not only in the request. Without it,
+  /// switching the app to German left yesterday's English meanings on the card
+  /// until the date rolled over or the app was killed — verified on a device,
+  /// where the fix looked like it had simply not shipped. A schema string that
+  /// no longer matches is already the signal this class uses to refetch, so
+  /// naming the language in it is the whole change.
+  static String dailyWordsCacheSchema() =>
+      'daily_words_v3:${LocaleTextService.nativeLanguageName}';
+
   List<Map<String, dynamic>> get dailyWords {
     final usableWords = _sanitizeDailyWords(_dailyWords);
     if (usableWords.isNotEmpty) return usableWords;
@@ -1668,7 +1679,7 @@ class AppStateProvider extends ChangeNotifier {
       final lastDate = prefs.getString('daily_words_date');
       final todayDate = DateTime.now().toIso8601String().split('T')[0];
       final cachedJson = prefs.getString('daily_words_cache');
-      const cacheSchema = 'daily_words_v3';
+      final String cacheSchema = dailyWordsCacheSchema();
       final cachedSchema = prefs.getString('daily_words_cache_schema');
 
       if (!forceRefresh &&

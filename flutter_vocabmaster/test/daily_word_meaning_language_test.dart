@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vocabmaster/providers/app_state_provider.dart';
 import 'package:vocabmaster/services/locale_text_service.dart';
 import 'dart:ui';
 
@@ -41,5 +42,34 @@ void main() {
     LocaleTextService.setAppLocale(const Locale('PT', 'BR'));
 
     expect(LocaleTextService.nativeLanguageName, 'Portuguese');
+  });
+
+  _cacheKeyTests();
+}
+
+/// The cached copy has to know which language it is.
+///
+/// Verified on a device: switching the app to German kept the English meanings
+/// on the card until the app was killed. The request carried the new language;
+/// the cache did not, so nothing asked for it.
+void _cacheKeyTests() {
+  test('the cache key changes with the language', () {
+    LocaleTextService.setAppLocale(const Locale('tr'));
+    final String turkish = AppStateProvider.dailyWordsCacheSchema();
+    LocaleTextService.setAppLocale(const Locale('de'));
+    final String german = AppStateProvider.dailyWordsCacheSchema();
+    LocaleTextService.setAppLocale(const Locale('es'));
+    final String spanish = AppStateProvider.dailyWordsCacheSchema();
+
+    expect(<String>{turkish, german, spanish}, hasLength(3));
+    expect(german, contains('German'));
+  });
+
+  test('the same language keeps the same key, so nothing refetches daily', () {
+    LocaleTextService.setAppLocale(const Locale('pt'));
+    final String first = AppStateProvider.dailyWordsCacheSchema();
+    LocaleTextService.setAppLocale(const Locale('PT', 'BR'));
+
+    expect(AppStateProvider.dailyWordsCacheSchema(), first);
   });
 }
