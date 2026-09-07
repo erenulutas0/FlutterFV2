@@ -2,6 +2,13 @@
 *.class
 *.log
 *.lock
+# ...except the app's. The blanket rule above comes from Dart's template for
+# LIBRARIES, where a lock file would over-constrain consumers. This repo ships
+# an application, and CI without a lock resolves its own dependency set on
+# every run: on 7 Sep 2026 that picked sqlite3 3.5.2, whose prebuilt
+# libsqlite3.x64.linux.so failed its own hash check, and the AAB build died in
+# a package no commit had touched. The lock is how CI builds what was tested.
+!flutter_vocabmaster/pubspec.lock
 *.pyc
 *.swp
 .DS_Store
