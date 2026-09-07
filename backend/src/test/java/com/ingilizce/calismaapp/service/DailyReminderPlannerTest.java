@@ -1,5 +1,6 @@
 package com.ingilizce.calismaapp.service;
 
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -210,5 +211,85 @@ class DailyReminderPlannerTest {
         assertFalse(DailyReminderPlanner.isResolvableZone("TRT"));
         assertFalse(DailyReminderPlanner.isResolvableZone(null));
         assertFalse(DailyReminderPlanner.isResolvableZone("  "));
+    }
+
+
+    /// The plan call the language tests share: an evening in Istanbul, words waiting, and
+    /// a learner seen recently enough not to be treated as dormant.
+    private static DailyReminderPlanner.Decision sendableDecisionFor(String locale) {
+        return sendableDecisionFor(locale, 4);
+    }
+
+    private static DailyReminderPlanner.Decision sendableDecisionFor(String locale, long dueCount) {
+        Instant evening = istanbulAt(20);
+        return DailyReminderPlanner.plan(
+                "Europe/Istanbul", locale, EVENING, evening, dueCount, evening.minusSeconds(200_000));
+    }
+
+    // --- one message, in the reader's language ------------------------------------
+    //
+    // The reminder was Turkish or English and nothing else, while the app ships seven
+    // languages: five of them read the only message that reaches someone who is NOT
+    // looking at the app in a language they never chose. The client now sends the
+    // language the app is set to rather than the device's own, so what arrives here is
+    // a choice.
+
+    @Test
+    @DisplayName("every language the app ships has its own reminder")
+    void everyShippedLanguageHasCopy() {
+        java.util.Map<String, String> expectedTitle = java.util.Map.of(
+                "tr", "Tekrar zamanı",
+                "en", "Review time",
+                "de", "Zeit zum Wiederholen",
+                "fr", "C'est l'heure de réviser",
+                "it", "È ora di ripassare",
+                "pt", "Hora de revisar",
+                "es", "Hora de repasar");
+
+        expectedTitle.forEach((code, title) -> {
+            DailyReminderPlanner.Decision decision = sendableDecisionFor(code);
+            assertTrue(decision.send(), "no reminder for " + code);
+            assertEquals(title, decision.title(), "title for " + code);
+            assertFalse(decision.body().isBlank(), "empty body for " + code);
+        });
+    }
+
+    @Test
+    @DisplayName("a region tag picks the language, not a fallback")
+    void regionTagsResolve() {
+        assertEquals("es", DailyReminderPlanner.languageOf("es-419"));
+        assertEquals("pt", DailyReminderPlanner.languageOf("pt_BR"));
+        assertEquals("en", DailyReminderPlanner.languageOf("EN-GB"));
+        assertEquals("tr", DailyReminderPlanner.languageOf("tr-TR"));
+    }
+
+    @Test
+    @DisplayName("a language the app does not ship reads English, not Turkish")
+    void unshippedLanguageFallsBackToEnglish() {
+        // Turkish here would put Turkish in front of someone who has never seen it.
+        assertEquals("en", DailyReminderPlanner.languageOf("ja"));
+        assertEquals("en", DailyReminderPlanner.languageOf("ar-SA"));
+    }
+
+    @Test
+    @DisplayName("an absent locale is still Turkish, for the rows that predate the column")
+    void absentLocaleStaysTurkish() {
+        assertEquals("tr", DailyReminderPlanner.languageOf(null));
+        assertEquals("tr", DailyReminderPlanner.languageOf("   "));
+    }
+
+    @Test
+    @DisplayName("counts agree with their nouns everywhere but Turkish")
+    void pluralsAgree() {
+        // Turkish takes no plural after a number; the others do, and getting it wrong is
+        // visible on the lock screen of every learner every evening.
+        assertTrue(sendableDecisionFor("de", 1).body().contains("Wort ist"));
+        assertTrue(sendableDecisionFor("de", 4).body().contains("Wörter sind"));
+        assertTrue(sendableDecisionFor("es", 1).body().contains("palabra está"));
+        assertTrue(sendableDecisionFor("es", 4).body().contains("palabras están"));
+        assertTrue(sendableDecisionFor("en", 1).body().contains("word is"));
+        assertTrue(sendableDecisionFor("en", 4).body().contains("words are"));
+        assertTrue(sendableDecisionFor("tr", 1).body().contains("1 kelime"));
+        assertTrue(sendableDecisionFor("tr", 4).body().contains("4 kelime"));
     }
 }

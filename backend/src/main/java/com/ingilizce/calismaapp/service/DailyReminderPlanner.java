@@ -98,8 +98,8 @@ public final class DailyReminderPlanner {
             return Decision.skip("dormant-backoff");
         }
 
-        boolean turkish = isTurkish(locale);
-        return Decision.send(title(turkish), body(turkish, dueCount, dormant));
+        String language = languageOf(locale);
+        return Decision.send(title(language), body(language, dueCount, dormant));
     }
 
     /**
@@ -143,31 +143,98 @@ public final class DailyReminderPlanner {
         }
     }
 
-    static boolean isTurkish(String locale) {
-        // Default to Turkish rather than English: the audience is Turkish speakers, so an
-        // unknown locale is far more likely to be one of them than not, and the old default
-        // sent English to all of them.
+    /**
+     * Which language to write the reminder in.
+     *
+     * <p>This used to be a boolean: Turkish, or English for everyone else. The app ships
+     * seven languages, so five of them read their one nightly message -- the only thing
+     * that reaches someone who is not looking at the app -- in a language they did not
+     * choose. The client now sends the language the app is actually set to rather than the
+     * device's own, so a code arriving here is a choice, not a guess.
+     *
+     * <p>An absent locale still means Turkish. That is not the old "unknown is probably
+     * Turkish" bet, which the store listing has outgrown; it is that a blank arrives only
+     * from rows written before the column existed, and those devices are the launch
+     * audience.
+     */
+    static String languageOf(String locale) {
         if (locale == null || locale.isBlank()) {
-            return true;
+            return "tr";
         }
-        return locale.trim().toLowerCase(Locale.ROOT).startsWith("tr");
+        String code = locale.trim().toLowerCase(Locale.ROOT);
+        int cut = code.indexOf('-');
+        if (cut < 0) {
+            cut = code.indexOf('_');
+        }
+        if (cut > 0) {
+            code = code.substring(0, cut);
+        }
+        return switch (code) {
+            case "tr", "en", "de", "fr", "it", "pt", "es" -> code;
+            // A language the app does not ship. English rather than Turkish: it is what
+            // the interface itself falls back to, so it is what they are already reading.
+            default -> "en";
+        };
     }
 
-    private static String title(boolean turkish) {
-        return turkish ? "Tekrar zamanı" : "Review time";
+    static boolean isTurkish(String locale) {
+        return "tr".equals(languageOf(locale));
     }
 
-    private static String body(boolean turkish, long dueCount, boolean returning) {
-        if (turkish) {
-            // Turkish takes no plural agreement after a number, so one form covers every
-            // count: "1 kelime" and "12 kelime" are both correct.
-            return returning
+    private static String title(String language) {
+        return switch (language) {
+            case "tr" -> "Tekrar zamanı";
+            case "de" -> "Zeit zum Wiederholen";
+            case "fr" -> "C'est l'heure de réviser";
+            case "it" -> "È ora di ripassare";
+            case "pt" -> "Hora de revisar";
+            case "es" -> "Hora de repasar";
+            default -> "Review time";
+        };
+    }
+
+    /**
+     * @param dueCount how many words are waiting; the plural form is the caller's problem
+     *     in every language but Turkish, which takes none after a number -- "1 kelime" and
+     *     "12 kelime" are both correct.
+     */
+    private static String body(String language, long dueCount, boolean returning) {
+        boolean one = dueCount == 1;
+        return switch (language) {
+            case "tr" -> returning
                     ? "Ara vermişsin — " + dueCount + " kelime hâlâ seni bekliyor."
                     : dueCount + " kelime tekrar için hazır. Birkaç dakika yeter.";
-        }
-        String words = dueCount == 1 ? "word is" : "words are";
-        return returning
-                ? "You have been away — " + dueCount + " " + words + " still waiting."
-                : dueCount + " " + words + " ready for review. A few minutes is enough.";
+            case "de" -> returning
+                    ? "Du warst eine Weile weg — " + dueCount
+                            + (one ? " Wort wartet noch." : " Wörter warten noch.")
+                    : dueCount + (one ? " Wort ist" : " Wörter sind")
+                            + " zum Wiederholen bereit. Ein paar Minuten reichen.";
+            case "fr" -> returning
+                    ? "Vous avez fait une pause — " + dueCount
+                            + (one ? " mot vous attend encore." : " mots vous attendent encore.")
+                    : dueCount + (one ? " mot est prêt" : " mots sont prêts")
+                            + " à réviser. Quelques minutes suffisent.";
+            case "it" -> returning
+                    ? "Sei stato via un po' — " + dueCount
+                            + (one ? " parola ti aspetta ancora." : " parole ti aspettano ancora.")
+                    : dueCount + (one ? " parola è pronta" : " parole sono pronte")
+                            + " per il ripasso. Bastano pochi minuti.";
+            case "pt" -> returning
+                    ? "Você ficou um tempo fora — " + dueCount
+                            + (one ? " palavra ainda espera." : " palavras ainda esperam.")
+                    : dueCount + (one ? " palavra está pronta" : " palavras estão prontas")
+                            + " para revisar. Alguns minutos bastam.";
+            case "es" -> returning
+                    ? "Has estado ausente — " + dueCount
+                            + (one ? " palabra sigue esperando." : " palabras siguen esperando.")
+                    : dueCount + (one ? " palabra está lista" : " palabras están listas")
+                            + " para repasar. Con unos minutos basta.";
+            default -> {
+                String words = one ? "word is" : "words are";
+                yield returning
+                        ? "You have been away — " + dueCount + " " + words + " still waiting."
+                        : dueCount + " " + words + " ready for review. A few minutes is enough.";
+            }
+        };
     }
 }

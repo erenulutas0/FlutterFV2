@@ -11,6 +11,7 @@ import 'analytics_service.dart';
 import 'api_service.dart';
 import 'auth_service.dart';
 import 'local_reminder_service.dart';
+import 'locale_text_service.dart';
 
 class PushTokenService {
   PushTokenService({
@@ -27,6 +28,7 @@ class PushTokenService {
 
   static const _lastRegisteredTokenKey = 'push:last_registered_token';
   static const _lastRegisteredDayKey = 'push:last_registered_day';
+  static const _lastRegisteredLocaleKey = 'push:last_registered_locale';
   static const _lastRegisteredAppVersionKey =
       'push:last_registered_app_version';
   static bool _initialized = false;
@@ -166,9 +168,18 @@ class PushTokenService {
     final packageInfo = await PackageInfo.fromPlatform();
     final appVersion = '${packageInfo.version}+${packageInfo.buildNumber}';
     final lastAppVersion = prefs.getString(_lastRegisteredAppVersionKey);
+    // The language the reminder will be written in, so a learner who switches
+    // it does not keep getting notifications in the old one until tomorrow.
+    // The device's own locale used to be sent here, which meant the app could
+    // be read in German on a Turkish phone and the nightly reminder still
+    // arrived in Turkish -- the one message that reaches someone who is not
+    // looking at the app, in a language they did not choose.
+    final locale = LocaleTextService.appLanguageCode;
+    final lastLocale = prefs.getString(_lastRegisteredLocaleKey);
     if (!force &&
         lastToken == token &&
         lastDay == today &&
+        lastLocale == locale &&
         lastAppVersion == appVersion) {
       return;
     }
@@ -182,13 +193,14 @@ class PushTokenService {
       platform: platform,
       deviceId: deviceId,
       appVersion: appVersion,
-      locale: PlatformDispatcher.instance.locale.toLanguageTag(),
+      locale: locale,
       timezone: await _ianaTimezone(),
       dailyRemindersEnabled: dailyRemindersEnabled,
     );
 
     await prefs.setString(_lastRegisteredTokenKey, token);
     await prefs.setString(_lastRegisteredDayKey, today);
+    await prefs.setString(_lastRegisteredLocaleKey, locale);
     await prefs.setString(_lastRegisteredAppVersionKey, appVersion);
     await AnalyticsService.logPushTokenRegistered(platform: platform);
   }

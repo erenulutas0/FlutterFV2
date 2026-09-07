@@ -19,7 +19,10 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -49,7 +52,10 @@ public class DailyContentControllerTest {
 
     @Test
     void dailyWordsReturnsOkWithWordsArray() throws Exception {
-        when(dailyWordsService.getDailyWords(any(LocalDate.class)))
+        // The endpoint takes the language the app is being read in; a client that sends
+        // none still gets a set, which is what every build before that parameter existed
+        // will keep asking for.
+        when(dailyWordsService.getDailyWords(any(LocalDate.class), nullable(String.class)))
                 .thenReturn(List.of(
                         Map.of("id", 1, "word", "resilient"),
                         Map.of("id", 2, "word", "insight")
@@ -61,6 +67,23 @@ public class DailyContentControllerTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.words").isArray())
                 .andExpect(jsonPath("$.words[0].word").value("resilient"));
+
+        verify(dailyWordsService).getDailyWords(any(LocalDate.class), isNull());
+    }
+
+    @Test
+    void dailyWordsPassesTheRequestedLanguageThrough() throws Exception {
+        // Without this the endpoint would answer every reader from the same row, which is
+        // how an English or German learner came to read Turkish meanings.
+        when(dailyWordsService.getDailyWords(any(LocalDate.class), nullable(String.class)))
+                .thenReturn(List.of(Map.of("id", 1, "word", "festival")));
+
+        mockMvc.perform(get("/api/content/daily-words")
+                        .param("lang", "German")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+
+        verify(dailyWordsService).getDailyWords(any(LocalDate.class), eq("German"));
     }
 
     @Test
