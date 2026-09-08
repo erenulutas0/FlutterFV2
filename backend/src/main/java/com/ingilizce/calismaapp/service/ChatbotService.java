@@ -132,8 +132,24 @@ public class ChatbotService {
     return chatTurn(message, scenario, scenarioContext, userId, profile, speakerName).ai();
   }
 
-  /** One thing the learner said, put right, for showing beside the reply. */
-  public record Correction(String said, String better) {
+  /**
+   * One thing the learner said, put right, for showing beside the reply.
+   *
+   * <p>[note] is one short sentence in the learner's OWN language saying why the original
+   * was wrong, or null when the model did not supply a usable one. Two English sentences
+   * with a word changed between them tell a learner that they were wrong and not what they
+   * got wrong -- "I am boring" against "I'm bored" is a joke to someone who already knows
+   * the difference and a mystery to everyone else, which is most of this app's audience.
+   *
+   * <p>Null, never empty: a blank line under a correction is indistinguishable, on a phone,
+   * from a card that failed to draw.
+   */
+  public record Correction(String said, String better, String note) {
+
+    /** A correction with nothing explained: what every call site built before the note existed. */
+    public Correction(String said, String better) {
+      this(said, better, null);
+    }
   }
 
   /** A reply, and the correction that came back with it. [correction] may be null. */
@@ -155,6 +171,30 @@ public class ChatbotService {
   private static final String FIX_SEPARATOR = "->";
 
   /**
+   * What divides the correction from the note explaining it.
+   *
+   * <p>Two pipes, because the note is a free sentence in a language nobody on this side of
+   * the wire reads, and it has to be told apart from the correction without understanding
+   * either. A dash, a colon, a bracket or a parenthesis all occur inside ordinary Turkish,
+   * Spanish or German prose; "||" does not occur in any of the eight languages this app
+   * supports.
+   *
+   * <p>It is also why the arrow rule survives. "Exactly one arrow, or nothing" is what
+   * keeps an ambiguous line from producing a confident wrong split, and a note is exactly
+   * the kind of sentence that would contain a second arrow. The note comes off first, so
+   * the arrow rule goes on seeing the line it was written for.
+   */
+  private static final String FIX_NOTE_SEPARATOR = "||";
+
+  /**
+   * How much of a note survives. Roughly two lines under the correction on a phone.
+   *
+   * <p>Matches the client's own ceiling, and the client does not trust the server to have
+   * applied it any more than the server trusts the model.
+   */
+  private static final int FIX_NOTE_MAX_LENGTH = 160;
+
+  /**
    * How the model is asked for it.
    *
    * <p>Appended to every chat prompt rather than written into each of the ten scenario
@@ -170,28 +210,62 @@ public class ChatbotService {
    * named as a mistake explicitly, because a model that understands the sentence will
    * otherwise let it pass as communication.
    *
-   * <p>A1 and A2 still get no card. That policy says not to correct at all -- confidence
-   * before accuracy -- and it is the existing product decision, not an oversight of this
-   * feature.
+   * <p>That reasoning now runs all the way down, so the card fires at A1 and A2 as well.
+   * It used to stop above them, on the grounds that "confidence before accuracy" says
+   * those learners are not corrected at all -- but that rule, like the frequency it comes
+   * from, is about what Amy says OUT LOUD. A silent chip the learner reads alone costs the
+   * conversation nothing at any level, and the beginners it was withheld from are the ones
+   * with the most to learn from it: a learner arriving at A1 was told the app corrects them
+   * and then never shown a single correction.
+   *
+   * <p>They are also the ones who cannot read a bare correction, which is why the note is
+   * REQUIRED at A1 and A2 and merely wanted above them.
+   *
+   * <p>Takes the profile because the note is written in the learner's own language, and
+   * nothing else in this prompt ever told the model what that language is.
    */
-  private static final String FIX_INSTRUCTIONS = """
+  private static String fixInstructions(LearningLanguageProfile profile) {
+    String nativeLanguage = profile.sourceLanguage();
+    String level = profile.englishLevel();
+    boolean beginner = "A1".equals(level) || "A2".equals(level);
+    String notePolicy = beginner
+        ? "- This learner is " + level + ", so the note is REQUIRED on every line you add. At this\n"
+            + "  level the two English sentences on their own teach nothing; the note is the only\n"
+            + "  part of the card they can actually read."
+        : "- Add the note whenever you can say why in one short sentence. Leave it off rather than\n"
+            + "  padding it out.";
+    return """
 
 HOW TO OFFER A CORRECTION:
 - Reply naturally first. Never mention corrections, formats or markers inside your reply.
 - Then, if the learner's message had one clear mistake, add a FINAL line of exactly this
   shape and nothing after it:
-%s their exact words %s the corrected words
+%s their exact words %s the corrected words %s short note in %s
 - A mistake is anything a native speaker would not say: grammar ("I am agree"), and also
   word choice carried over from another language ("open the light", "married with",
   "explain me", "I am boring" meant as "I'm bored"). The meaning being clear does not
   make the words correct.
 - The correction frequency above governs how much your spoken reply dwells on mistakes.
   It does not govern this line. The line becomes a quiet card the learner reads alone,
-  so add it for every clear mistake at B1 and above, even when the reply lets it pass.
-- At A1 and A2 omit the line entirely; those learners are not corrected at all.
+  so add it for every clear mistake at every level, A1 and A2 included, even when your
+  reply lets it pass.
+- The note after %s is written in %s. It is the only %s you ever write: your reply itself
+  stays in English, whatever language the learner writes to you in.
+- A good note says WHY the words were wrong, or what they actually mean to a native
+  speaker. It is NEVER a translation of the corrected words -- the learner can already
+  read those. ONE short sentence, no longer.
+- Worked example, for a learner who said "I am boring" and meant that they were bored:
+%s I am boring %s I'm bored %s "I am boring" means you make other people bored; the word for the feeling is "bored".
+  That note is written in English only so you can see what belongs in it. Write yours in %s.
+%s
 - Correct only what they actually said. Never invent a mistake to have something to show.
-- One line at most, ever. No explanation on it.
-""".formatted(FIX_MARKER, FIX_SEPARATOR);
+- One line at most, ever, and nothing after the note.
+""".formatted(
+        FIX_MARKER, FIX_SEPARATOR, FIX_NOTE_SEPARATOR, nativeLanguage,
+        FIX_NOTE_SEPARATOR, nativeLanguage, nativeLanguage,
+        FIX_MARKER, FIX_SEPARATOR, FIX_NOTE_SEPARATOR, nativeLanguage,
+        notePolicy);
+  }
 
   public ChatTurn chatTurn(String message, String scenario, String scenarioContext, Long userId,
       LearningLanguageProfile profile, String speakerName) {
@@ -212,13 +286,22 @@ HOW TO OFFER A CORRECTION:
       LearningLanguageProfile profile, String speakerName, String recall) {
     String systemPrompt =
         buildChatSystemPrompt(message, scenario, scenarioContext, userId, profile, speakerName)
+            + nativeLanguageBlock(profile)
             + recallBlock(recall)
-            + FIX_INSTRUCTIONS;
+            + fixInstructions(profile);
     List<Map<String, String>> history = conversationSessionService != null
         ? conversationSessionService.recentMessages(userId)
         : List.of();
+    // 260 was sized for a two-or-three-sentence reply and a bare correction. The
+    // correction now carries a note in the learner's own language, and a language
+    // that is not English costs more tokens per word than the reply it explains.
+    // The FIX line is the LAST thing generated, so a completion that runs out of
+    // room loses the correction first and silently -- the learner gets a friendly
+    // answer and no card, which is the exact failure this whole feature exists to
+    // end. max_tokens is a ceiling, not a reservation, so the extra costs nothing
+    // on the turns that do not need it.
     AiCallResult result = callGroqText(
-        systemPrompt, history, message, 260 + REASONING_TOKEN_ALLOWANCE, "speaking-chat");
+        systemPrompt, history, message, 360 + REASONING_TOKEN_ALLOWANCE, "speaking-chat");
 
     Correction correction = extractCorrection(result.content());
     String reply = stripCorrection(result.content());
@@ -257,6 +340,27 @@ HOW TO OFFER A CORRECTION:
         continue;
       }
       String body = lines[i].substring(marker + FIX_MARKER.length()).trim();
+      // The note comes off first, so everything below reads exactly the line it read
+      // before notes existed. Split on the FIRST separator: the note is free prose in a
+      // language this method cannot check, and a second "||" inside it belongs to the
+      // note rather than to the format.
+      String note = null;
+      int noteAt = body.indexOf(FIX_NOTE_SEPARATOR);
+      if (noteAt >= 0) {
+        String supplied = body.substring(noteAt + FIX_NOTE_SEPARATOR.length()).trim();
+        body = body.substring(0, noteAt).trim();
+        // An overlong note is dropped, and dropped ALONE. A model asked for one sentence
+        // that answers with a paragraph has stopped following the format, and the first
+        // 160 characters of a paragraph are not an explanation. The correction it came
+        // with is still good, and it is the part the learner came for: a runaway note
+        // must never cost them the fix it was supposed to explain.
+        //
+        // Absent stays absent rather than becoming "", so the wire can tell "nothing to
+        // explain" from "an explanation that says nothing".
+        if (!supplied.isEmpty() && supplied.length() <= FIX_NOTE_MAX_LENGTH) {
+          note = supplied;
+        }
+      }
       // Exactly one arrow, or nothing. With two there is no way to tell which one
       // divides the halves: "the sign say A -> B -> the sign says A -> B" is a real
       // correction of a real sentence, and either split produces a confident, wrong
@@ -276,7 +380,7 @@ HOW TO OFFER A CORRECTION:
       if (said.equals(better)) {
         return null;
       }
-      return new Correction(said, better);
+      return new Correction(said, better, note);
     }
     return null;
   }
@@ -857,11 +961,21 @@ IMPORTANT:
         mode.correctionStyle());
   }
 
+  /**
+   * How much the SPOKEN reply may dwell on mistakes. Not what the correction card does.
+   *
+   * <p>The A1/A2 line said only "Do NOT correct errors directly at this level", and the
+   * model applied it to the whole turn, card included -- so the learners who most need to
+   * be shown what they said wrong were the only ones who never saw a correction at all.
+   * "In your spoken reply" is the whole of the fix here; the card's own policy is stated
+   * where the card is asked for.
+   */
   private String correctionFrequencyGuidance(String cefrLevel) {
     String level = cefrLevel == null ? "" : cefrLevel.trim().toUpperCase();
     return switch (level) {
       case "A1", "A2" ->
-        "Do NOT correct errors directly at this level. Simply model correct usage in your replies. "
+        "Do NOT correct errors directly in your spoken reply at this level. Simply model correct "
+            + "usage in your replies. "
             + "Confidence matters more than accuracy right now; keep the learner talking.";
       case "B1" ->
         "You may recast at most ONE clear error naturally per message (repeat it back correctly "
@@ -873,6 +987,40 @@ IMPORTANT:
         "You can give direct but friendly corrections for real patterns, up to two per message when "
             + "significant. Focus on recurring patterns, not one-off slips.";
     };
+  }
+
+  /**
+   * Who the learner is, in the one respect this prompt never told the model.
+   *
+   * <p>The profile has carried a source language since it existed and the chat prompt used
+   * exactly one field off it, the CEFR level. So the tutor was asked to explain mistakes to
+   * a person whose language it had never been told -- which is fine for a reply that is
+   * always in English, and is the whole game for the note on the correction line.
+   *
+   * <p>Appended once here rather than threaded through the ten scenario templates, for the
+   * same reason the recall block is: every scene wants the identical paragraph, and a
+   * placeholder in nine formatted blocks is nine chances to leave the tenth out.
+   *
+   * <p>The English rule is stated in the same breath as the language, deliberately. Naming
+   * a native language inside a system prompt is an invitation to start speaking it, and the
+   * one thing a speaking tutor must not do is answer the learner in their own language.
+   */
+  private String nativeLanguageBlock(LearningLanguageProfile profile) {
+    return """
+
+LEARNER'S NATIVE LANGUAGE: %s
+- They are a %s speaker learning English. Assume the mistakes of one: the phrasings that
+  come out of translating from %s word for word.
+- Speak English in your reply, always, whatever language they write to you in. Never
+  switch to %s in the reply itself, and never translate yourself.
+- The single exception is the note on the correction line described below, which is
+  written in %s so that the explanation lands.
+""".formatted(
+        profile.sourceLanguage(),
+        profile.sourceLanguage(),
+        profile.sourceLanguage(),
+        profile.sourceLanguage(),
+        profile.sourceLanguage());
   }
 
   /** How much of a recall line survives. Matches the client's own ceiling. */

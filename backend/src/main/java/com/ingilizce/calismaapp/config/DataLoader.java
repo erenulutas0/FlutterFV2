@@ -23,15 +23,21 @@ public class DataLoader {
                     BigDecimal.ZERO,
                     "USD",
                     3650,
-                    "Base app access with 1500 daily AI token quota.");
+                    "Base app access with 8k daily AI token quota.");
 
+            // The numbers below must agree with V030__align_plan_quota_metadata_with
+            // _enforcement.sql. Flyway runs before this CommandLineRunner, so on an
+            // empty database V030's UPDATEs match no rows and whatever is written here
+            // is what a fresh environment ships with. When these drifted, PRO_ANNUAL was
+            // seeded at 999.99 against a store that charges 1199.99 -- the price bug
+            // V030 exists to fix, waiting to return on the next restored backup.
             ensurePlan(
                     repository,
                     "PREMIUM",
                     new BigDecimal("149.99"),
                     "TRY",
                     30,
-                    "AI access with 30k daily token quota.");
+                    "AI access with 100k daily token quota.");
 
             ensurePlan(
                     repository,
@@ -39,7 +45,7 @@ public class DataLoader {
                     new BigDecimal("999.99"),
                     "TRY",
                     30,
-                    "AI access with 60k daily token quota.");
+                    "AI access with 250k daily token quota.");
 
             // Keep legacy plans for backward compatibility with existing clients.
             ensurePlan(
@@ -48,15 +54,15 @@ public class DataLoader {
                     new BigDecimal("149.99"),
                     "TRY",
                     30,
-                    "AI access with 30k daily token quota.");
+                    "AI access with 100k daily token quota.");
 
             ensurePlan(
                     repository,
                     "PRO_ANNUAL",
-                    new BigDecimal("999.99"),
+                    new BigDecimal("1199.99"),
                     "TRY",
                     365,
-                    "AI access with 60k daily token quota.");
+                    "AI access with 100k daily token quota.");
 
             log.info("Subscription plans verified/sealed.");
         };

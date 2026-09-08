@@ -113,8 +113,11 @@ class ChatbotServiceTest {
 
         chatbotService.chat("hi");
 
-        // 260 of answer room plus the reasoning allowance; see REASONING_TOKEN_ALLOWANCE.
-        verify(aiCompletionProvider).chatCompletionWithUsage(anyList(), eq(false), eq(260 + 1600), any(),
+        // 360 of answer room plus the reasoning allowance; see REASONING_TOKEN_ALLOWANCE.
+        // Raised from 260 when the correction gained a note written in the learner's own
+        // language: the FIX line is generated last, so a completion that runs out of room
+        // drops the correction and nothing says so.
+        verify(aiCompletionProvider).chatCompletionWithUsage(anyList(), eq(false), eq(360 + 1600), any(),
                 eq("llama-3.3-70b-versatile"));
     }
 
@@ -327,6 +330,51 @@ class ChatbotServiceTest {
                 nullable(String.class));
         String systemPrompt = messagesCaptor.getValue().get(0).get("content");
         assertTrue(systemPrompt.contains("LEARNER LEVEL: B1"));
+    }
+
+    @Test
+    void chat_ShouldTellTheTutorWhichLanguageTheLearnerSpeaks() {
+        // The profile has carried a source language since it existed and this prompt used
+        // exactly one field off it, the CEFR level. So the tutor was asked to explain a
+        // mistake to someone whose language it had never been told, and the explanation
+        // came out in English -- which is the language the learner is failing to read.
+        when(aiCompletionProvider.chatCompletionWithUsage(anyList(), anyBoolean(), any(), any(), nullable(String.class)))
+                .thenReturn(AiCompletionProvider.CompletionResult.of("Sounds great!", 1, 1, 2));
+
+        chatbotService.chat("hi", null, null, 42L,
+                LearningLanguageProfile.of("Spanish", "English", "Spanish", "B1", "Speaking"));
+
+        ArgumentCaptor<List<Map<String, String>>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(aiCompletionProvider).chatCompletionWithUsage(messagesCaptor.capture(), eq(false), any(), any(),
+                nullable(String.class));
+        String systemPrompt = messagesCaptor.getValue().get(0).get("content");
+        assertTrue(systemPrompt.contains("LEARNER'S NATIVE LANGUAGE: Spanish"));
+        assertTrue(systemPrompt.contains("short note in Spanish"));
+        // And the reply itself does not follow it there. Naming a native language in a
+        // system prompt is an invitation to start speaking it.
+        assertTrue(systemPrompt.contains("Speak English in your reply, always"));
+        assertTrue(systemPrompt.contains("switch to Spanish in the reply itself"));
+    }
+
+    @Test
+    void chat_ShouldStillAskForTheCorrectionCard_AtA1() {
+        // The card is silent, so the per-level frequency that keeps the SPOKEN reply from
+        // lecturing has nothing to say about it. It used to be applied to both, and the
+        // learners with the most to be shown were the only ones shown nothing.
+        when(aiCompletionProvider.chatCompletionWithUsage(anyList(), anyBoolean(), any(), any(), nullable(String.class)))
+                .thenReturn(AiCompletionProvider.CompletionResult.of("Nice!", 1, 1, 2));
+
+        chatbotService.chat("hi", null, null, 42L,
+                LearningLanguageProfile.of("Turkish", "English", "Turkish", "A1", "Speaking"));
+
+        ArgumentCaptor<List<Map<String, String>>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(aiCompletionProvider).chatCompletionWithUsage(messagesCaptor.capture(), eq(false), any(), any(),
+                nullable(String.class));
+        String systemPrompt = messagesCaptor.getValue().get(0).get("content");
+        assertTrue(systemPrompt.contains("A1 and A2 included"));
+        assertTrue(systemPrompt.contains("REQUIRED on every line"));
+        // The frequency line still holds the reply back, and now says so.
+        assertTrue(systemPrompt.contains("Do NOT correct errors directly in your spoken reply"));
     }
 
     @Test

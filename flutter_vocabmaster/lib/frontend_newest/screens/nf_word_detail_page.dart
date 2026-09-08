@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../models/word.dart';
+import '../../models/xp_sources.dart';
 import '../../providers/app_state_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/xp_manager.dart';
@@ -409,7 +410,7 @@ class _NfWordDetailPageState extends State<NfWordDetailPage> {
       // ever see the same sentence.
       unawaited(appState.addXPForAction(
         XPActionTypes.addSentence,
-        source: 'Cümle Ekleme',
+        source: XpSources.sentenceAdded,
         transactionId:
             'sentence_${_word.id}_${draft.sentence.toLowerCase().hashCode}',
       ));

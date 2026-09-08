@@ -9,6 +9,7 @@ import '../models/word.dart';
 import '../services/api_service.dart';
 import '../widgets/modern_card.dart';
 import '../widgets/modern_background.dart';
+import '../models/xp_sources.dart';
 import '../providers/app_state_provider.dart';
 import '../services/analytics_service.dart';
 import '../services/in_app_review_service.dart';
@@ -307,7 +308,7 @@ class _RepeatPageState extends State<RepeatPage> with TickerProviderStateMixin {
     if (!mounted) return;
     final appState = context.read<AppStateProvider>();
     await appState.addXPForAction(XPActionTypes.reviewComplete,
-        source: 'Tekrar');
+        source: XpSources.srsReview);
     await AnalyticsService.logPracticeCompleted(type: 'classic_review');
     if (!mounted) return;
     // The completion is counted when the session ends, in _registerSessionAction, not once

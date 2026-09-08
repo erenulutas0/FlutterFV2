@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../models/writing_practice_models.dart';
+import '../../models/xp_sources.dart';
 import '../../providers/app_state_provider.dart';
 import '../../services/ai_error_message_formatter.dart';
 import '../../services/ai_paywall_handler.dart';
@@ -158,13 +159,13 @@ class _NfWritingPracticePageState extends State<NfWritingPracticePage> {
             'writing_${_selectedLevel}_${(_topic?.topic ?? '').hashCode}_${_userText.hashCode}';
         await appState.addXPForAction(
           XPActionTypes.writingComplete,
-          source: 'Yazma Pratiği',
+          source: XpSources.writingPractice,
           transactionId: '$txBase:complete',
         );
         if (evaluation.score >= 90) {
           await appState.addXPForAction(
             XPActionTypes.writingPerfect,
-            source: 'Mükemmel Yazım',
+            source: XpSources.writingPerfect,
             transactionId: '$txBase:perfect',
           );
         }

@@ -35,11 +35,12 @@ KlioAI, tek bir fikir üzerine kurulu bir İngilizce uygulaması: bir kelime,
 ancak ihtiyacın olduğu anda aklına geliyorsa senindir.
 
 SESLİ KONUŞ, GERÇEK BİR DURUMDA
-Düğmeyi basılı tut ve konuş. Karşındaki sesli cevap veriyor, hem de rolünde:
-kafede sipariş ver, otele giriş yap, doktorda şikâyetini anlat, aldığın ürünü
-iade et, ya da sadece gününü anlat. Daha doğru söylenebilecek bir şey
-söylediğinde, doğrusu kendi cevabının hemen altında beliriyor — kırmızı bir
-çarpı değil, kullanabileceğin bir cümle.
+Düğmeyi basılı tut ve konuş. Karşındaki sesli cevap veriyor — İngilizce, hem
+de rolünde: kafede sipariş ver, otele giriş yap, doktorda şikâyetini anlat,
+aldığın ürünü iade et, ya da sadece gününü anlat. Net bir hata yaptığında
+cevabının altında küçük bir kart beliriyor: söylediğin cümle üstü çizili,
+altında doğrusu, en altta da neyin yanlış olduğunu Türkçe söyleyen tek bir
+satır. Kırmızı bir çarpı değil, kullanabileceğin bir cümle — ve nedeni.
 
 GERÇEK KİTAP OKU
 Baştan sona okunabilen, ücretsiz kitaplar: Sherlock Holmes, Ezop Masalları,
@@ -66,17 +67,20 @@ GERİ KALANINI ÇALIŞ
 - Örnekli gramer anlatımları ve okuduğun alt konuya odaklı testler
 - Telaffuz: sesli oku, kaydet, kelime kelime netlik raporu al
 
-KENDİ DİLİNDE
-Arayüz İngilizce, Türkçe, Almanca, İspanyolca, Portekizce, İtalyanca ve
-Fransızca konuşuyor. Anlamlar, düzeltmeler ve açıklamalar da konuştuğunu
-söylediğin dilde geliyor.
+KENDİ DİLİNDE — VE İNGİLİZCE
+Arayüz yedi dil konuşuyor: İngilizce, Türkçe, Almanca, İspanyolca,
+Portekizce, İtalyanca ve Fransızca. Kelime anlamları — sözlükte ve
+alıştırmalarda — konuştuğunu söylediğin dilde geliyor; düzeltme kartındaki
+"neden yanlıştı" satırı da öyle. Konuştuğun kişi ise İngilizce konuşuyor ve
+İngilizce cevap veriyor; pratiğin sebebi zaten o.
 
 ÜCRETİ
 Kelime listesi, tekrarlar, kitaplar ve gramer anlatımları ücretsiz. Yapay
 zekâ özellikleri — konuşma pratiği, yazma değerlendirmesi, üretilen cümleler
 ve testler — bir kullanım kotasıyla çalışıyor. Yeni hesaplar 7 günlük deneme
-kotasıyla başlıyor, PRO bu kotayı yükseltiyor. Google Play üzerinden istediğin
-zaman iptal edebilirsin.
+kotasıyla başlıyor; sonrasında her gün yenilenen ücretsiz bir hak kalıyor,
+PRO ise kotayı yükseltiyor. Google Play üzerinden istediğin zaman iptal
+edebilirsin.
 
 Reklam yok. Seni suçlayan bir seri sayacı yok. Sıralama tablosu yok.
 ```

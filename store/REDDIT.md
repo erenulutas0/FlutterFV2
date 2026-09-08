@@ -130,8 +130,9 @@ CEFR level. Tap a word and it's explained inside *that* sentence, one meaning,
 the one on the page. Tap again and it's saved with the sentence, and comes
 back for review on the day you're about to forget it.
 
-Free: reading, the word list, reviews, grammar. Paid: the AI parts, on a
-quota. No ads, no leaderboard, no streak that shames you.
+Free: reading, the word list, reviews, grammar, and a daily quota of the AI
+parts. Paid plans lift the quota. No ads, no leaderboard, no streak that
+shames you.
 
 https://play.google.com/store/apps/details?id=com.VocabMaster
 
@@ -156,8 +157,10 @@ Metin A'nın kısasını al, ilk üç maddeyi çıkar, yerine iki cümle koy:
 
 ```
 I built an English app where you read whole public-domain books and tap any
-word to get its meaning inside that sentence — plus a tutor you can talk to
-out loud that corrects you by showing a better version of what you said.
+word to get its meaning inside that sentence — plus a tutor you talk to out
+loud, who answers in English. Get something clearly wrong and a card shows
+your own sentence struck through, the better version, and one line in your
+own language on what went wrong.
 ```
 
 Ve **iki ham ekran görüntüsü** ekle: `store/play/screenshot_en_03.png`
@@ -223,15 +226,17 @@ nobody opens a language app already being one. What makes it worth showing is
 watching it climb.
 
 The rest of the app, briefly: you hold a button and talk to a tutor who
-answers out loud in character (ordering coffee, hotel check-in, a doctor's
-appointment), and when you say something that could be said better, the better
-version appears under your own reply. You read whole public-domain books —
+answers out loud in English, in character (ordering coffee, hotel check-in, a
+doctor's appointment), and when you get something clearly wrong, a card under
+your own reply shows what you said struck through, the better version, and one
+line in your own language on why. You read whole public-domain books —
 Sherlock Holmes, Aesop, Wilde — and tap any word to get its meaning *inside the
 sentence it came from*, not a dictionary entry with nine definitions. Saved
 words come back for review on the day you're about to forget them.
 
-Free: word list, reviews, books, grammar. Paid: the AI features, on a quota.
-No ads, no leaderboard, no streak that guilt-trips you.
+Free: word list, reviews, books, grammar, and a daily quota of the AI
+features. Paid plans lift the quota. No ads, no leaderboard, no streak that
+guilt-trips you.
 
 https://play.google.com/store/apps/details?id=com.VocabMaster
 
@@ -283,9 +288,10 @@ attached, and it comes back for review on the day you're about to lose it.
 
 Two other things are in there: a tutor you can talk to out loud in a specific
 situation (ordering coffee, checking into a hotel, explaining a symptom at the
-doctor), which corrects you by showing a better version of your own sentence
-rather than marking it wrong; and translation practice built from the words
-*you* saved rather than a fixed list.
+doctor), who answers in English and corrects you by showing a better version of
+your own sentence rather than marking it wrong — with one line under it, in
+your own language, saying what was actually wrong; and translation practice
+built from the words *you* saved rather than a fixed list.
 
 Things I deliberately did not do, in case they matter to you: no ads, no
 leaderboard, no streak that shames you when you miss a day, and today's plan is

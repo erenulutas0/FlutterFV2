@@ -10,13 +10,34 @@
 /// case and must stay distinguishable from an empty one: a chip that says
 /// nothing still tells the learner they got something wrong.
 class TutorCorrection {
-  const TutorCorrection({required this.said, required this.better});
+  const TutorCorrection({
+    required this.said,
+    required this.better,
+    this.note,
+  });
 
   /// What the learner actually said, as the transcript heard it.
   final String said;
 
   /// The same thing, said correctly.
   final String better;
+
+  /// Why the first line was wrong, in the language the learner reads.
+  ///
+  /// Two lines with one word changed between them tell a learner that they
+  /// were wrong and not what they got wrong: "I am boring" against "I'm bored"
+  /// is a joke to anyone who already knows the difference and a mystery to
+  /// everyone else, which is the entire audience for this screen. The model
+  /// writes this sentence in the learner's own language and the server sends
+  /// it through already written, so nothing on this side translates it or ever
+  /// should.
+  ///
+  /// Null is the ordinary case: the model is asked for a note and frequently
+  /// has nothing short to say, and every correction that predates the field
+  /// has none. It stays distinct from an empty string because a blank line
+  /// under a correction is indistinguishable, on a phone, from a card that
+  /// failed to draw.
+  final String? note;
 
   /// Reads the `correction` object off a chat response, or null.
   ///
@@ -43,8 +64,34 @@ class TutorCorrection {
     if (_normalise(said) == _normalise(better)) {
       return null;
     }
-    return TutorCorrection(said: said, better: better);
+    // The note is the one part of a correction the model composes freely, in a
+    // language nobody on this side of the wire can read, and it goes onto the
+    // screen unedited. Length is the only thing that can be checked without
+    // understanding it: asked for a clause, a model that decides to teach the
+    // present perfect instead pushes the corrected line off the top of a
+    // phone, and the corrected line is the reason the card exists. So an
+    // oversized note is dropped and the correction is kept. Never the reverse,
+    // and never the whole card -- a bad explanation must not cost a learner
+    // the fix it was explaining.
+    //
+    // Read more strictly than the two lines above it for the same reason. A
+    // said or better that arrived as the wrong type is worth stringifying,
+    // because the alternative is losing the correction; a note is worth
+    // nothing stringified, so anything that is not already text is simply not
+    // an explanation.
+    final Object? rawNote = value['note'];
+    final String note = rawNote is String ? rawNote.trim() : '';
+    return TutorCorrection(
+      said: said,
+      better: better,
+      note: note.isEmpty || note.length > _maxNoteLength ? null : note,
+    );
   }
+
+  /// Roughly two lines under the correction on a phone. The prompt asks for a
+  /// short clause, so anything past this is a model that stopped answering the
+  /// question it was asked.
+  static const int _maxNoteLength = 160;
 
   /// Whether this correction is about [transcript], the sentence actually
   /// sent to the model.

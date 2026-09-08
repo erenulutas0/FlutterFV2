@@ -13,6 +13,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import '../models/xp_sources.dart';
 import '../providers/app_state_provider.dart';
 import '../widgets/animated_background.dart';
 import '../widgets/voice_selection_modal.dart';
@@ -503,7 +504,7 @@ class _AIBotChatPageState extends State<AIBotChatPage>
     _speakingSessionXpAwarded = true;
     await context.read<AppStateProvider>().addXPForAction(
           XPActionTypes.speakingComplete,
-          source: 'Konuşma Pratiği',
+          source: XpSources.speakingPractice,
           transactionId: '$_speakingSessionXpId:complete',
         );
   }

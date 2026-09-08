@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../models/word.dart';
+import '../../models/xp_sources.dart';
 import '../../providers/app_state_provider.dart';
 import '../../providers/learning_language_provider.dart';
 import '../../services/ai_error_message_formatter.dart';
@@ -411,7 +412,7 @@ class _NfTranslationPracticePageState extends State<NfTranslationPracticePage> {
       _completeXpAwarded = true;
       await appState.addXPForAction(
         XPActionTypes.translationComplete,
-        source: 'Çeviri Pratiği',
+        source: XpSources.translationPractice,
         transactionId: '$_translationSetId:complete',
       );
     }
@@ -422,7 +423,7 @@ class _NfTranslationPracticePageState extends State<NfTranslationPracticePage> {
       _perfectXpAwarded = true;
       await appState.addXPForAction(
         XPActionTypes.translationPerfect,
-        source: 'Mükemmel Çeviri',
+        source: XpSources.translationPerfect,
         transactionId: '$_translationSetId:perfect',
       );
     }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../l10n/app_localizations.dart';
+import '../models/xp_sources.dart';
 import '../services/local_database_service.dart';
 import '../widgets/animated_background.dart';
 
@@ -112,9 +113,18 @@ class _XpHistoryPageState extends State<XpHistoryPage> {
                             final item = items[index];
                             final amount = item['amount'] as int? ?? 0;
                             final isPositive = amount >= 0;
+                            // Rows written before XP sources became keys
+                            // hold Turkish prose, and rows written since
+                            // hold a key that has no translation yet.
+                            // labelFor passes the first through untouched
+                            // and returns null for the second, so this
+                            // screen can never show a raw key.
+                            final rawName =
+                                item['actionName']?.toString();
                             final actionName =
-                                item['actionName']?.toString() ?? 'XP';
-                            final source = item['source']?.toString();
+                                XpSources.labelFor(rawName) ?? 'XP';
+                            final source = XpSources.labelFor(
+                                item['source']?.toString());
                             final createdAt =
                                 item['createdAt']?.toString() ?? '';
 

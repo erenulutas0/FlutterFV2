@@ -8,6 +8,7 @@ import '../widgets/modern_card.dart';
 import '../widgets/report_content_button.dart';
 import '../widgets/modern_background.dart';
 import '../models/word.dart';
+import '../models/xp_sources.dart';
 import '../providers/app_state_provider.dart';
 import '../providers/learning_language_provider.dart';
 import '../services/api_service.dart';
@@ -341,7 +342,7 @@ class _TranslationPracticePageState extends State<TranslationPracticePage> {
       _translationCompleteXpAwarded = true;
       await appState.addXPForAction(
         XPActionTypes.translationComplete,
-        source: 'Çeviri Pratiği',
+        source: XpSources.translationPractice,
         transactionId: '$_translationSetId:complete',
       );
     }
@@ -352,7 +353,7 @@ class _TranslationPracticePageState extends State<TranslationPracticePage> {
       _translationPerfectXpAwarded = true;
       await appState.addXPForAction(
         XPActionTypes.translationPerfect,
-        source: 'Mükemmel Çeviri',
+        source: XpSources.translationPerfect,
         transactionId: '$_translationSetId:perfect',
       );
     }

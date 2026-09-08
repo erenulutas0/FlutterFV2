@@ -1733,9 +1733,20 @@ public class ChatbotController {
             // than empty when there is nothing to show, so "no correction" and "a
             // correction of nothing" cannot be confused on the other side.
             if (turn.correction() != null) {
-                result.put("correction", Map.of(
-                        "said", turn.correction().said(),
-                        "better", turn.correction().better()));
+                // A plain HashMap, not Map.of: the note is optional and Map.of throws on a
+                // null value, so building the map eagerly would turn "the model had nothing
+                // to explain" -- the ordinary case -- into a 500 on the app's main screen.
+                Map<String, Object> correction = new HashMap<>();
+                correction.put("said", turn.correction().said());
+                correction.put("better", turn.correction().better());
+                String note = turn.correction().note();
+                // Absent rather than empty, for the same reason the correction itself is:
+                // the client reads a missing key as "no note", and an empty string as a
+                // note, which draws a blank line under the fix.
+                if (note != null && !note.isBlank()) {
+                    correction.put("note", note);
+                }
+                result.put("correction", correction);
             }
             result.put("timestamp", System.currentTimeMillis());
             return ResponseEntity.ok(result);

@@ -236,7 +236,58 @@ public class ChatbotControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.response").value("Where did you go?"))
                 .andExpect(jsonPath("$.correction.said").value("I go yesterday"))
-                .andExpect(jsonPath("$.correction.better").value("I went yesterday"));
+                .andExpect(jsonPath("$.correction.better").value("I went yesterday"))
+                // Nothing to explain here: the note is optional on the wire and this
+                // correction was built without one.
+                .andExpect(jsonPath("$.correction.note").doesNotExist());
+    }
+
+    @Test
+    void chatCarriesTheNoteWhenTheModelExplainedTheMistake() throws Exception {
+        // The note is the half of the card a beginner can actually read: two English
+        // sentences with a word changed between them say that you were wrong, not what
+        // you got wrong. It is written by the model in the learner's own language and
+        // travels through untouched -- nothing on this side translates anything.
+        when(chatbotService.chatTurn(anyString(), nullable(String.class), nullable(String.class),
+                anyLong(), any(LearningLanguageProfile.class), nullable(String.class),
+                nullable(String.class)))
+                .thenReturn(new ChatbotService.ChatTurn(
+                        ai("Oh no, that sounds dull!"),
+                        new ChatbotService.Correction(
+                                "I am boring",
+                                "I'm bored",
+                                "\"I am boring\" karsindakini sikiyorsun demek.")));
+
+        mockMvc.perform(post("/api/chatbot/chat")
+                .header("X-User-Id", "1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"message\":\"I am boring\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.correction.said").value("I am boring"))
+                .andExpect(jsonPath("$.correction.better").value("I'm bored"))
+                .andExpect(jsonPath("$.correction.note")
+                        .value("\"I am boring\" karsindakini sikiyorsun demek."));
+    }
+
+    @Test
+    void chatOmitsTheNoteKeyRatherThanSendingAnEmptyOne() throws Exception {
+        // Map.of would have thrown on the null and cost the whole reply; an empty string
+        // would have drawn a blank line under the fix. Absent is the only thing the
+        // client reads as "no explanation".
+        when(chatbotService.chatTurn(anyString(), nullable(String.class), nullable(String.class),
+                anyLong(), any(LearningLanguageProfile.class), nullable(String.class),
+                nullable(String.class)))
+                .thenReturn(new ChatbotService.ChatTurn(
+                        ai("Where did you go?"),
+                        new ChatbotService.Correction("I go yesterday", "I went yesterday", "   ")));
+
+        mockMvc.perform(post("/api/chatbot/chat")
+                .header("X-User-Id", "1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"message\":\"I go yesterday\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.correction.said").value("I go yesterday"))
+                .andExpect(jsonPath("$.correction.note").doesNotExist());
     }
 
     @Test

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../../models/xp_sources.dart';
 import '../../providers/app_state_provider.dart';
 import '../../services/ai_error_message_formatter.dart';
 import '../../services/ai_paywall_handler.dart';
@@ -269,11 +270,15 @@ class _NfReadingPracticePageState extends State<NfReadingPracticePage> {
       } else {
         xpAction = XPActionTypes.readingHard;
       }
-      // The source strings are analytics data the backend already groups by;
-      // changing them would split the reading totals across two buckets.
-      await appState.addXPForAction(xpAction, source: 'Okuma Pratiği');
+      // The ledger label, not UI copy. The comment that used to sit here
+      // said the backend groups reading totals by this string, so it could
+      // not change. It does not: `xp_history` is a local SQLite table that
+      // is never uploaded, and the only reader of the column in the whole
+      // app is the history screen. See XpSources for why it is a key now.
+      await appState.addXPForAction(xpAction,
+          source: XpSources.readingPractice);
       if (correct == _questions.length && _questions.isNotEmpty) {
-        await appState.addXP(10, reason: 'Mükemmel Okuma Skoru');
+        await appState.addXP(10, reason: XpSources.readingPerfect);
       }
     }
 

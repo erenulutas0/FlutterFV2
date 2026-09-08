@@ -11,6 +11,7 @@ import '../services/local_reminder_service.dart';
 import '../models/language_profile.dart';
 import '../models/word.dart';
 import '../models/sentence_view_model.dart';
+import '../models/xp_sources.dart';
 import '../services/groq_service.dart';
 import '../services/locale_text_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1056,7 +1057,7 @@ class AppStateProvider extends ChangeNotifier {
       final today = DateTime.now().toIso8601String().split('T').first;
       unawaited(addXPForAction(
         XPActionTypes.reviewComplete,
-        source: 'SRS Tekrar',
+        source: XpSources.srsReview,
         transactionId: 'srs_review_${wordId}_$today',
       ));
 
@@ -1101,10 +1102,10 @@ class AppStateProvider extends ChangeNotifier {
         // XP ekle - kaynağa göre farklı XP türü (transactionId ile)
         if (source == 'daily_word') {
           await addXPForAction(XPActionTypes.dailyWordLearn,
-              source: 'Günün Kelimesi', transactionId: txId);
+              source: XpSources.dailyWord, transactionId: txId);
         } else if (source == 'quick_dictionary') {
           await addXPForAction(XPActionTypes.quickDictionaryAdd,
-              source: 'Hızlı Sözlük', transactionId: txId);
+              source: XpSources.quickDictionary, transactionId: txId);
         } else {
           await addXPForAction(XPActionTypes.addWord,
               source: source, transactionId: txId);
@@ -1303,7 +1304,7 @@ class AppStateProvider extends ChangeNotifier {
 
         // XP ekle (cümle başına 5 XP) - içerik tabanlı txId ile
         await addXPForAction(XPActionTypes.addSentence,
-            source: 'Cümle Ekleme', transactionId: txId);
+            source: XpSources.sentenceAdded, transactionId: txId);
 
         await AnalyticsService.logFirstSentenceAdded(difficulty: difficulty);
 
@@ -1405,7 +1406,7 @@ class AppStateProvider extends ChangeNotifier {
 
         // XP ekle (pratik cümlesi başına 5 XP) - içerik tabanlı txId ile
         await addXPForAction(XPActionTypes.addPracticeSentence,
-            source: 'Pratik Cümlesi', transactionId: txId);
+            source: XpSources.practiceSentenceAdded, transactionId: txId);
 
         await AnalyticsService.logFirstSentenceAdded(difficulty: difficulty);
 

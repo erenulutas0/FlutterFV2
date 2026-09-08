@@ -60,9 +60,9 @@ Metin yok, başlık yok; Facebook'ta ilk cümle başlıktır.
 ```
 Merhaba, ben Eren. İngilizce konuşma pratiği için bir uygulama yaptım, adı KlioAI. Kendi derdimden çıktı: grameri biliyorum ama konuşurken donuyorum, konuşacak kimse de yok.
 
-Uygulamada Amy adında bir öğretmen var. Sen konuşuyorsun, o cevap veriyor. Hata yaptığında düzeltiyor ve neden yanlış olduğunu Türkçe açıklıyor. Bir sonraki konuşmada geçen seferki hatanı hatırlayıp üstüne gidiyor. Her gün 5 yeni kelime de veriyor.
+Uygulamada Amy adında bir konuşma arkadaşın var. Sen konuşuyorsun, o İngilizce cevap veriyor — Türkçe bilen bir öğretmen değil, karşına çıkacak insan gibi. Net bir hata yaptığında altta küçük bir kart beliriyor: söylediğin cümle üstü çizili, altında doğrusu, en altta da neyin yanlış olduğunu söyleyen tek bir satır. O satır Türkçe. Bir sonraki konuşmaya geçen seferki düzeltmeleri hatırlayarak başlıyor. Her gün 5 yeni kelime de veriyor.
 
-Android'de yayında, ücretsiz deneme var. Link ilk yorumda.
+Android'de yayında; yeni hesaplarda 7 günlük deneme, sonrasında her gün ücretsiz bir hak var. Link ilk yorumda.
 
 Tek başıma yapıyorum. Denerseniz ne beğenmediğinizi yazın, en çok o işe yarıyor.
 ```
@@ -84,7 +84,7 @@ tek karede gösteren o.
 ## Gönderi — Flutter Türkiye
 
 ```
-Merhaba. Flutter ile İngilizce konuşma pratiği uygulaması yaptım, adı KlioAI. Sen konuşuyorsun, Amy cevap veriyor, hatanı düzeltip Türkçe açıklıyor, bir sonraki konuşmada hatırlıyor.
+Merhaba. Flutter ile İngilizce konuşma pratiği uygulaması yaptım, adı KlioAI. Sen konuşuyorsun, Amy İngilizce cevap veriyor; net bir hata yaptığında bir düzeltme kartı çıkıyor — cümlen üstü çizili, altında doğrusu, en altta neden yanlış olduğunu söyleyen tek satır Türkçe. Bir sonraki konuşmaya geçen seferki düzeltmeleri hatırlayarak başlıyor.
 
 Bir hafta önce Play'de çıktı. Tek kişiyim, backend Spring Boot, ses ve dil tarafı Groq üstünde.
 

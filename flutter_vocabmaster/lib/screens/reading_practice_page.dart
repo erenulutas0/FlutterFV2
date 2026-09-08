@@ -6,6 +6,7 @@ import '../services/api_service.dart';
 import '../services/ai_error_message_formatter.dart';
 import '../services/ai_paywall_handler.dart';
 import '../services/daily_practice_progress_service.dart';
+import '../models/xp_sources.dart';
 import '../providers/app_state_provider.dart';
 import '../services/xp_manager.dart';
 import '../widgets/feedback_prompt_sheet.dart';
@@ -231,11 +232,11 @@ class _ReadingPracticePageState extends State<ReadingPracticePage> {
         xpAction = XPActionTypes.readingHard;
       }
 
-      await appState.addXPForAction(xpAction, source: 'Okuma Pratiği');
+      await appState.addXPForAction(xpAction, source: XpSources.readingPractice);
 
       // Mükemmel skor için bonus
       if (correct == _questions.length && _questions.isNotEmpty) {
-        await appState.addXP(10, reason: 'Mükemmel Okuma Skoru');
+        await appState.addXP(10, reason: XpSources.readingPerfect);
       }
     }
 

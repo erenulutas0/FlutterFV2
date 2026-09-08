@@ -12,6 +12,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../models/tutor_correction.dart';
+import '../../models/xp_sources.dart';
 import '../../models/voice_model.dart';
 import '../../providers/app_state_provider.dart';
 import '../../providers/learning_language_provider.dart';
@@ -599,12 +600,13 @@ class _NfTutorPageState extends State<NfTutorPage> {
     }
 
     _sessionXpAwarded = true;
-    // `source` is the ledger label, not UI copy, and it is Turkish because the
-    // existing chat screen writes exactly this string. Translating it here
-    // would split one activity into two names in the learner's XP history.
+    // `source` is the ledger label, not UI copy. It used to be the Turkish
+    // literal the old chat screen wrote, which put prose in a column seven
+    // languages read from; both screens now write the same stable key, so the
+    // activity stays one line in the history and can be named at display time.
     final int added = await context.read<AppStateProvider>().addXPForAction(
           XPActionTypes.speakingComplete,
-          source: 'Konuşma Pratiği',
+          source: XpSources.speakingPractice,
           transactionId: '$_sessionXpId:complete',
         );
     if (!mounted || added <= 0) {
@@ -1704,11 +1706,39 @@ class _CorrectionNote extends StatelessWidget {
               color: t.ink,
             ),
           ),
+          // Why it was wrong, in the learner's own language, when the model
+          // sent one. Quieter and smaller than the line above it, because the
+          // corrected sentence is the thing to take away and this is read
+          // once. Unlabelled on purpose: it arrives already written in the
+          // language the learner reads, so it is a sentence rather than a
+          // field, and a heading over it would be a word to translate for no
+          // gain. It wraps -- half a reason is not a shorter reason -- and
+          // when there is none it adds nothing, not an empty Text and the gap
+          // above it, which reads as a card that failed to finish drawing.
+          if (correction.note case final String why) ...<Widget>[
+            const SizedBox(height: NfSpace.s6),
+            Text(
+              why,
+              style: NfTokens.body(
+                size: NfFont.s12,
+                color: t.inkMuted,
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 }
+
+/// The correction card on its own, for widget tests.
+///
+/// Everything that draws it is private to a page that needs a microphone, a
+/// network and a text-to-speech engine to reach, so the alternative to this is
+/// not testing the one card in the tutor tab a learner is meant to read.
+@visibleForTesting
+Widget nfCorrectionCardForTest(TutorCorrection correction) =>
+    _CorrectionNote(correction: correction);
 
 class _FeedbackNote extends StatelessWidget {
   const _FeedbackNote({required this.text});

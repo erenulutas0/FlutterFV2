@@ -35,6 +35,14 @@ class NfSavedTurn {
           'c': <String, String>{
             'said': correction!.said,
             'better': correction!.better,
+            // The line saying WHY, in the learner's own language. Written
+            // conditionally because the reader treats an absent note and an
+            // empty one differently, and a blank line under a correction reads
+            // on a phone as a card that failed to draw. Without this the note
+            // survived exactly as long as the app stayed open: reopening the
+            // conversation from history gave back the two English sentences
+            // and dropped the only part a beginner could read.
+            if (correction!.note != null) 'note': correction!.note!,
           },
       };
 

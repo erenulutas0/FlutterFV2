@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/writing_practice_models.dart';
+import '../models/xp_sources.dart';
 import '../providers/app_state_provider.dart';
 import '../services/groq_service.dart';
 import '../services/api_service.dart';
@@ -778,13 +779,13 @@ class _WritingPracticePageState extends State<WritingPracticePage> {
             'writing_${_selectedLevel}_${(_topic?.topic ?? '').hashCode}_${_userText.hashCode}';
         await appState.addXPForAction(
           XPActionTypes.writingComplete,
-          source: 'Yazma Pratiği',
+          source: XpSources.writingPractice,
           transactionId: '$txBase:complete',
         );
         if (evaluation.score >= 90) {
           await appState.addXPForAction(
             XPActionTypes.writingPerfect,
-            source: 'Mükemmel Yazım',
+            source: XpSources.writingPerfect,
             transactionId: '$txBase:perfect',
           );
         }

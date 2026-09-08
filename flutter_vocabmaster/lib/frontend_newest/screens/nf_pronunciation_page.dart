@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../../models/xp_sources.dart';
 import '../../providers/app_state_provider.dart';
 import '../../services/ai_error_message_formatter.dart';
 import '../../services/ai_paywall_handler.dart';
@@ -511,13 +512,13 @@ class _NfPronunciationPageState extends State<NfPronunciationPage> {
         'pronunciation_${_targetText.hashCode}_${_pronunciationAttemptSequence}_${DateTime.now().millisecondsSinceEpoch}';
     await appState.addXPForAction(
       XPActionTypes.speakingComplete,
-      source: 'Telaffuz Pratiği',
+      source: XpSources.pronunciationPractice,
       transactionId: '$txBase:complete',
     );
     if (report.overallScore >= 90) {
       await appState.addXPForAction(
         XPActionTypes.speakingExcellent,
-        source: 'Mükemmel Telaffuz',
+        source: XpSources.pronunciationPerfect,
         transactionId: '$txBase:excellent',
       );
     }

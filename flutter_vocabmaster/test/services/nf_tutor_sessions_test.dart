@@ -61,6 +61,50 @@ void main() {
     expect(back.single.turns.last.correction?.better, "I'd like a coffee");
   });
 
+  test('the line explaining the mistake survives being reopened', () async {
+    // The card carries three things: what you said, the right version, and one
+    // line in your own language saying why. Only the first two were written to
+    // storage, so the note lived exactly as long as the app stayed open --
+    // reopening a conversation from history handed a beginner back two English
+    // sentences and dropped the only part of the card they could read.
+    await NfTutorSessions.save(session('a', turns: const [
+      NfSavedTurn(
+        text: 'I am boring',
+        fromTutor: false,
+        correction: TutorCorrection(
+          said: 'I am boring',
+          better: "I'm bored",
+          note: "boring = sıkıcı; sen 'sıkılmış' demek istedin",
+        ),
+      ),
+    ]));
+
+    final List<NfTutorSession> back = await NfTutorSessions.load();
+
+    expect(back.single.turns.single.correction?.note,
+        "boring = sıkıcı; sen 'sıkılmış' demek istedin");
+  });
+
+  test('a correction with nothing to explain writes no note at all', () async {
+    // Absent and empty are different to the reader: a blank line under a
+    // correction reads on a phone as a card that failed to draw.
+    await NfTutorSessions.save(session('a', turns: const [
+      NfSavedTurn(
+        text: 'I go school',
+        fromTutor: false,
+        correction:
+            TutorCorrection(said: 'I go school', better: 'I go to school'),
+      ),
+    ]));
+
+    final String stored =
+        (await SharedPreferences.getInstance()).getString(NfTutorSessions.prefsKey)!;
+
+    expect(stored, isNot(contains('"note"')));
+    expect((await NfTutorSessions.load()).single.turns.single.correction?.note,
+        isNull);
+  });
+
   test('saving the same conversation again replaces it', () async {
     await NfTutorSessions.save(session('a'));
     await NfTutorSessions.save(session('a', turns: const <NfSavedTurn>[

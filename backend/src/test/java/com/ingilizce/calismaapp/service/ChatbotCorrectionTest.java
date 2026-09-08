@@ -84,6 +84,140 @@ class ChatbotCorrectionTest {
     }
 
     @Nested
+    @DisplayName("the note that explains it")
+    class Note {
+
+        /// The note is one sentence in the learner's own language saying why the first
+        /// half was wrong. It arrives after "||" because a note is free prose in a
+        /// language this parser cannot read, and "||" is the one divider that does not
+        /// turn up inside Turkish, Spanish or German writing.
+        ///
+        /// Everything here holds one line: the note is the part that may be thrown away,
+        /// and the correction is the part that may not.
+
+        @Test
+        @DisplayName("is read off the end of the line")
+        void noteIsParsed() {
+            String content = "Oh no, that sounds dull!\n"
+                    + "[[FIX]] I am boring -> I'm bored || \"I am boring\" karsindakini sikiyorsun demek.";
+
+            ChatbotService.Correction correction = ChatbotService.extractCorrection(content);
+
+            assertNotNull(correction);
+            assertEquals("I am boring", correction.said());
+            assertEquals("I'm bored", correction.better());
+            assertEquals("\"I am boring\" karsindakini sikiyorsun demek.", correction.note());
+        }
+
+        @Test
+        @DisplayName("and the reply keeps none of it either")
+        void noteNeverReachesTheReply() {
+            // The note is the longest thing on the line and the most obviously not-English.
+            // Left behind, it is read out loud in a Turkish accent by an American voice.
+            String content = "Oh no, that sounds dull!\n"
+                    + "[[FIX]] I am boring -> I'm bored || sikildigini anlatmak icin \"I'm bored\" denir.";
+
+            assertEquals("Oh no, that sounds dull!", ChatbotService.stripCorrection(content));
+        }
+
+        @Test
+        @DisplayName("is absent, not empty, when the model did not write one")
+        void missingNoteIsNormal() {
+            // Every correction that predates the note looks like this, and the model is
+            // free to leave it off above A2. It must not cost the correction, and it must
+            // not arrive as "" -- a blank line under a fix reads as a card that failed.
+            ChatbotService.Correction correction =
+                    ChatbotService.extractCorrection("Nice.\n[[FIX]] I go -> I went");
+
+            assertNotNull(correction);
+            assertEquals("I go", correction.said());
+            assertEquals("I went", correction.better());
+            assertNull(correction.note());
+        }
+
+        @Test
+        @DisplayName("is absent when the separator is there and the note is not")
+        void emptyNoteIsAbsent() {
+            ChatbotService.Correction correction =
+                    ChatbotService.extractCorrection("Nice.\n[[FIX]] I go -> I went ||   ");
+
+            assertNotNull(correction);
+            assertEquals("I went", correction.better());
+            assertNull(correction.note());
+        }
+
+        @Test
+        @DisplayName("is dropped when it runs away, and the correction survives")
+        void runawayNoteCostsOnlyItself() {
+            // A model asked for one sentence that delivers a grammar lecture has stopped
+            // following the format, and the first 160 characters of a lecture are not an
+            // explanation. Truncating would show the learner half a sentence; dropping
+            // the whole card would cost them the fix because the explanation was bad.
+            String lecture = "y".repeat(161);
+            String content = "Sure.\n[[FIX]] I go -> I went || " + lecture;
+
+            ChatbotService.Correction correction = ChatbotService.extractCorrection(content);
+
+            assertNotNull(correction);
+            assertEquals("I go", correction.said());
+            assertEquals("I went", correction.better());
+            assertNull(correction.note());
+            assertEquals("Sure.", ChatbotService.stripCorrection(content));
+        }
+
+        @Test
+        @DisplayName("is kept at exactly the cap")
+        void noteAtTheCapSurvives() {
+            String justFits = "y".repeat(160);
+
+            ChatbotService.Correction correction =
+                    ChatbotService.extractCorrection("Sure.\n[[FIX]] I go -> I went || " + justFits);
+
+            assertNotNull(correction);
+            assertEquals(justFits, correction.note());
+        }
+
+        @Test
+        @DisplayName("may contain an arrow without confusing the halves")
+        void arrowInsideTheNote() {
+            // The reason the note is split off FIRST. "Exactly one arrow or nothing" is
+            // what stops an ambiguous line producing a confident wrong split, and a
+            // sentence explaining a correction is exactly where a second arrow shows up.
+            String content = "Right.\n[[FIX]] I go -> I went || gecmis zaman: go -> went.";
+
+            ChatbotService.Correction correction = ChatbotService.extractCorrection(content);
+
+            assertNotNull(correction);
+            assertEquals("I go", correction.said());
+            assertEquals("I went", correction.better());
+            assertEquals("gecmis zaman: go -> went.", correction.note());
+        }
+
+        @Test
+        @DisplayName("keeps a second separator, because that one is prose")
+        void firstSeparatorWins() {
+            String content = "Right.\n[[FIX]] I go -> I went || once soyle || sonra boyle";
+
+            ChatbotService.Correction correction = ChatbotService.extractCorrection(content);
+
+            assertNotNull(correction);
+            assertEquals("I went", correction.better());
+            assertEquals("once soyle || sonra boyle", correction.note());
+        }
+
+        @Test
+        @DisplayName("cannot rescue a line that has no correction in it")
+        void noteWithoutACorrection() {
+            // The note explains a fix. Without the fix there is nothing to explain, and
+            // this degrades like every other malformed case.
+            assertNull(ChatbotService.extractCorrection("Nice.\n[[FIX]] || bu yanlis."));
+            assertNull(ChatbotService.extractCorrection("Nice.\n[[FIX]] I go || bu yanlis."));
+            assertNull(ChatbotService.extractCorrection(
+                    "Nice.\n[[FIX]] the sign say A -> B -> the sign says A -> B || iki ok var."));
+        }
+    }
+
+    @Nested
     @DisplayName("nothing is invented")
     class NotFound {
 

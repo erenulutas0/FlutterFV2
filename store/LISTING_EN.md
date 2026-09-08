@@ -44,11 +44,12 @@ KlioAI is an English learning app built around one idea: a word is only yours
 once it comes back to you when you need it.
 
 SPEAK, OUT LOUD, IN A REAL SITUATION
-Hold the button and talk. The tutor answers out loud, in character. Order a
-coffee, check into a hotel, explain a symptom at the doctor, return something
-you bought, or just talk about your day. When you say something that could be
-said better, the better version appears under your own reply — not a red mark,
-a sentence you can use.
+Hold the button and talk. The tutor answers out loud, in English, in character.
+Order a coffee, check into a hotel, explain a symptom at the doctor, return
+something you bought, or just talk about your day. When you get something
+clearly wrong, a small card appears under your reply: your own sentence struck
+through, the way to say it underneath, and one line in your own language saying
+what went wrong. Not a red mark — a sentence you can use, and the reason.
 
 READ REAL BOOKS
 Whole books, free to read: Sherlock Holmes, Aesop's Fables, The Happy Prince,
@@ -75,21 +76,24 @@ PRACTISE THE REST
 - Grammar guides with worked examples, and a quiz on the subtopic you just read
 - Pronunciation: read aloud, record, and get a clarity report word by word
 
-IN YOUR LANGUAGE
-The interface speaks English, Turkish, German, Spanish, Portuguese, Italian and
-French. Meanings, corrections and explanations arrive in the language you tell
-us you speak, not in English by default.
+YOUR LANGUAGE, AND ENGLISH
+The interface speaks seven languages: English, Turkish, German, Spanish,
+Portuguese, Italian and French. Word meanings, in the dictionary and in the
+exercises, arrive in the language you tell us you speak, and so does the line
+under a correction that says why you were wrong. The tutor speaks English and
+answers in English — that is the part you came to practise.
 
 WHAT IT COSTS
 The word list, reviews, books and grammar guides are free. AI features — the
 speaking tutor, writing evaluation, generated sentences and quizzes — run on a
-usage quota. New accounts start with a 7-day trial quota, and PRO lifts it. You
-can cancel any time in Google Play.
+usage quota. New accounts start with a 7-day trial quota; after that a free
+daily allowance stays, and PRO lifts the ceiling. You can cancel any time in
+Google Play.
 
 No ads. No streak that shames you. No leaderboard.
 ```
 
-2,316 characters.
+2,669 characters.
 
 ---
 
