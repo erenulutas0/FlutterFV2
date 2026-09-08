@@ -60,7 +60,10 @@ class GooglePlaySubscriptionVerificationServiceTest {
         properties.setProductPlanMap(Map.of(
                 "pro_monthly_subscription", "PREMIUM",
                 "monthly", "PREMIUM",
-                "pro_annual_subscription", "PREMIUM_PLUS"));
+                // Mirrors what ships: the annual product books against the row that
+                // is a year long and priced like the store, not against PREMIUM_PLUS.
+                // A fixture that disagrees with the config teaches the wrong shape.
+                "pro_annual_subscription", "PRO_ANNUAL"));
 
         restTemplate = mock(RestTemplate.class);
         service = new GooglePlaySubscriptionVerificationService(
@@ -177,7 +180,7 @@ class GooglePlaySubscriptionVerificationServiceTest {
                         NOW.plusSeconds(3600),
                         List.of("MONTHLY"));
 
-        assertEquals("PREMIUM_PLUS", service.resolvePlanName(verification, "PRO_ANNUAL_SUBSCRIPTION"));
+        assertEquals("PRO_ANNUAL", service.resolvePlanName(verification, "PRO_ANNUAL_SUBSCRIPTION"));
         assertEquals("PREMIUM", service.resolvePlanName(verification, null));
         assertEquals(null, service.resolvePlanName(null, "monthly"));
     }
