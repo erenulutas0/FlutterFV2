@@ -5,6 +5,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../../providers/app_state_provider.dart';
 import '../../providers/language_provider.dart';
 import '../../providers/learning_language_provider.dart';
 import '../../services/analytics_service.dart';
@@ -152,6 +153,7 @@ class NfSettingsPage extends StatelessWidget {
 
   Future<void> _pickAppLanguage(BuildContext context) async {
     final LanguageProvider provider = context.read<LanguageProvider>();
+    final AppStateProvider appState = context.read<AppStateProvider>();
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final NfTokens t = NfTokens.of(context);
 
@@ -165,6 +167,12 @@ class NfSettingsPage extends StatelessWidget {
       label: (String code) => AppLocalizations.languageName(code),
       onSelect: (String code) async {
         await provider.selectLanguage(Locale(code));
+        // The day's five words are written in the reader's language and cached
+        // under it, and nothing else asks for them again until the next cold
+        // start. Without this the menus turned German and the meanings stayed
+        // English until the app was killed — which is what a learner would read
+        // as the setting not working.
+        unawaited(appState.refreshDailyWords());
         messenger.showSnackBar(
           SnackBar(
             content: Text(
