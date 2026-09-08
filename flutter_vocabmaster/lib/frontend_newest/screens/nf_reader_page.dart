@@ -853,7 +853,11 @@ class ReaderWordSheetState extends State<ReaderWordSheet> {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _error = e.toString();
+        // Named, not stringified. This rendered `e.toString()` in red under the
+        // word, so keeping a word from a novel failed with "Exception: Kelime
+        // kaydetme başarısız: 500" — Turkish, in front of every learner in
+        // every language. The lookup path a few lines above already does this.
+        _error = AiErrorMessageFormatter.forError(e);
       });
     }
   }

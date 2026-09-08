@@ -282,6 +282,44 @@ class AuthService {
   }
 
   /// Google Login
+  /// What a successful Google sign-in tells its caller.
+  ///
+  /// A named function rather than a map literal inside [googleLogin], because
+  /// the mistake it exists to prevent has now happened twice in the same three
+  /// lines. The server answers with a flat object and this rebuilt it keeping
+  /// only `success` and `user`, so every other top-level field was dropped
+  /// silently:
+  ///
+  /// - `newAccount` decides whether the landing page logs `signup_completed`
+  ///   or `login_completed`. It never arrived, so `signup_completed` fired for
+  ///   nobody for as long as it has existed — and that is the only event in
+  ///   the funnel that tells a real new person from a returning device or a
+  ///   store's pre-launch robot, neither of which can sign in with Google.
+  /// - `trialBlockedReason` is the one word the server says about a refused
+  ///   7-day trial, and the paywall goes on promising that trial until it
+  ///   hears it.
+  ///
+  /// Whatever is added to that response next will be dropped the same way
+  /// unless it is added here, which is easier to notice in a function with a
+  /// name and a test than in a literal halfway down a 90-line method.
+  ///
+  /// Absent stays absent. A field the server did not send must not become
+  /// `false`, which is a claim this build cannot support and which an older
+  /// backend would make on every login.
+  @visibleForTesting
+  static Map<String, dynamic> googleLoginResult(
+    Map<String, dynamic> data,
+    Map<String, dynamic> user,
+  ) {
+    return <String, dynamic>{
+      'success': true,
+      'user': user,
+      if (data['newAccount'] != null) 'newAccount': data['newAccount'],
+      if (data['trialBlockedReason'] != null)
+        'trialBlockedReason': data['trialBlockedReason'],
+    };
+  }
+
   Future<Map<String, dynamic>> googleLogin() async {
     Uri? googleLoginUri;
     try {
@@ -367,7 +405,11 @@ class AuthService {
         await saveSession(token, refreshToken, user);
         final resolvedId = await getUserId();
         _debugLog('googleLogin final getUserId=$resolvedId');
-        return {'success': true, 'user': user};
+        // `trialBlockedReason` sits at the top level of the response, not
+        // inside `user`, so it was dropped here and no caller could ever see
+        // it. It is the only word the server says about a refused 7-day trial,
+        // and the paywall goes on promising that trial until it hears it.
+        return googleLoginResult(data, user);
       } else {
         _debugLog('googleLogin failed message=${data['error']}');
         return {

@@ -53,15 +53,20 @@ class AiPaywallHandler {
     }
 
     if (error is ApiUnauthorizedException) {
+      // Both branches used to print `error.message` and fall back to a Turkish
+      // literal. Neither string is written for a reader: Spring answers an
+      // expired JWT with `{"error":"Unauthorized"}`, so a learner in any of the
+      // seven languages was shown a red snackbar saying the single English word
+      // "Unauthorized" and then signed out — and `_protectedHeaders` threw a
+      // Turkish sentence that reached the same line just as literally. This is
+      // one of about fourteen call sites across nine shipping screens, so it is
+      // also the single place worth getting right.
       if (_shouldOpenSubscriptionForUnauthorized(error)) {
         if (showSnackBar) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                error.message.isNotEmpty
-                    ? error.message
-                    : 'Bu ozellik icin abonelik gerekli.',
-              ),
+              content:
+                  Text(AiErrorMessageFormatter.forSubscriptionRequired()),
               backgroundColor: Colors.orange,
             ),
           );
@@ -73,11 +78,7 @@ class AiPaywallHandler {
       if (showSnackBar) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              error.message.isNotEmpty
-                  ? error.message
-                  : 'Oturum suresi doldu. Lutfen tekrar giris yapin.',
-            ),
+            content: Text(AiErrorMessageFormatter.forUnauthorized(error)),
             backgroundColor: Colors.redAccent,
           ),
         );

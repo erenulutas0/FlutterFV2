@@ -27,10 +27,14 @@ import '../widgets/nf_chip.dart';
 /// changed: plans sit in [NfCard]s, the learner picks one, and a single
 /// [NfPrimaryButton] starts the purchase.
 ///
-/// User-facing copy now goes through `context.tr`. The legacy screen picked
-/// between a Turkish and an English literal, which meant a German learner read
-/// English on the one screen where money changes hands; the keys carry all
-/// three languages.
+/// User-facing copy now goes through `context.tr` — the screen's own labels
+/// always did, and every message it DISPLAYS does too. That second half was
+/// missing for a long time: the sentences came from `SubscriptionService`,
+/// which chose between a Turkish and an English literal, so the purchase
+/// dialog, the restore line and every failure were English in the Spanish,
+/// German, French, Italian and Portuguese app. The service now names a key and
+/// this screen resolves it, so all seven languages reach the one screen where
+/// money changes hands.
 class NfSubscriptionPage extends StatefulWidget {
   const NfSubscriptionPage({super.key});
 
@@ -47,6 +51,46 @@ class NfSubscriptionPage extends StatefulWidget {
 bool debugIsActiveSubscription(Map<String, dynamic> status) =>
     _NfSubscriptionPageState.isActiveSubscription(status);
 
+/// The paywall's line about the 7-day trial, or nothing.
+///
+/// The backend grants MOST new accounts a 7-day trial AI quota (FREE_TRIAL_7D),
+/// and the paywall names it so the trial does conversion work instead of being
+/// given away silently.
+///
+/// It can also refuse one — a device or an address that has already claimed a
+/// trial, or a Redis blip while it was checking — and it says so exactly once,
+/// as `trialBlockedReason` in the login response. Nothing in the app read that
+/// field, so the account landed on the free tier in silence while this line
+/// went on telling that reader "New accounts start with a 7-day trial quota".
+/// It was false for them at the moment they read it, which is worse than
+/// saying nothing.
+///
+/// And saying nothing is what happens: the alternative is a paragraph
+/// explaining an anti-abuse rule to somebody far likelier to have reinstalled
+/// the app than to have gamed it.
+///
+/// Its own widget so the rule can be tested without the plan list, the billing
+/// plugin and two network calls behind it.
+class PaywallTrialNote extends StatelessWidget {
+  const PaywallTrialNote({super.key, required this.trialWasBlocked});
+
+  final bool trialWasBlocked;
+
+  @override
+  Widget build(BuildContext context) {
+    if (trialWasBlocked) {
+      return const SizedBox.shrink();
+    }
+    final NfTokens t = NfTokens.of(context);
+    return Text(
+      key: const ValueKey('paywall-trial-note'),
+      context.tr('subscription.trialNote'),
+      textAlign: TextAlign.center,
+      style: NfTokens.body(size: NfFont.s12, color: t.inkFaint),
+    );
+  }
+}
+
 class _NfSubscriptionPageState extends State<NfSubscriptionPage> {
   final SubscriptionService _subscriptionService = SubscriptionService();
   final AuthService _authService = AuthService();
@@ -57,6 +101,12 @@ class _NfSubscriptionPageState extends State<NfSubscriptionPage> {
   bool _hasActiveSubscription = false;
   String? _subscriptionEndDateLabel;
   String? _pendingPurchasePlanName;
+
+  /// Whether the server refused this account's 7-day trial at sign-up.
+  ///
+  /// Starts false so the note shows for everybody it is true for, which is
+  /// almost everybody; the read below turns it off for the few it lied to.
+  bool _trialWasBlocked = false;
 
   /// Which plan the single CTA will buy. Defaults to the annual plan once the
   /// list loads, because that is the one the screen recommends.
@@ -76,7 +126,19 @@ class _NfSubscriptionPageState extends State<NfSubscriptionPage> {
     // two frontends still need one name for "the paywall was shown".
     AnalyticsService.logPaywallShown(source: 'subscription_page');
     _initializeIAP();
+    unawaited(_readTrialGrant());
     _loadPlans().then((_) => _syncOwnedPurchasesIfNeeded());
+  }
+
+  /// Finds out whether the trial this screen advertises was ever granted.
+  ///
+  /// Kept separate from [_loadPlans] because it must not depend on the network:
+  /// the claim is false whether or not the plan list loads, and a paywall shown
+  /// offline is exactly where a promise nobody can check does the most damage.
+  Future<void> _readTrialGrant() async {
+    final bool blocked = await SubscriptionService.wasTrialBlocked();
+    if (!mounted || !blocked) return;
+    setState(() => _trialWasBlocked = true);
   }
 
   void _initializeIAP() {
@@ -90,32 +152,42 @@ class _NfSubscriptionPageState extends State<NfSubscriptionPage> {
       _pendingPurchasePlanName = null;
       await _loadPlans();
       if (!mounted) return;
-      _showSuccessDialog(message);
+      _showSuccessDialog(_say(message));
     };
     _subscriptionService.onPurchaseError = (error) {
       if (!mounted) return;
       AnalyticsService.logPurchaseFailed(
         planName: _pendingPurchasePlanName,
-        reason: error,
+        // The key, not the sentence: a reason that changed with the reader's
+        // language could not be counted across a funnel.
+        reason: error.key,
       );
       _pendingPurchasePlanName = null;
-      final lower = error.toLowerCase();
-      final syncing =
-          lower.contains('senkronize') || lower.contains('aktariliyor');
       setState(() => _isPurchasing = false);
-      _showSnack(error, warning: syncing, error: !syncing);
-      if (syncing) {
-        Future.delayed(
-          const Duration(seconds: 2),
-          () async {
-            if (mounted) {
-              await _loadPlans();
-            }
-          },
-        );
-      }
+      // Always red, and no reload. This used to search the message for the
+      // substrings "senkronize" and "aktariliyor" to decide whether the store
+      // was still syncing, and show an amber snackbar plus a delayed reload if
+      // it found one. No message the service produces has contained either
+      // word for a long time, so the amber path and its reload had simply
+      // stopped existing while still looking like working code. Every message
+      // that arrives here is a purchase that did not happen.
+      _showSnack(_say(error), error: true);
     };
   }
+
+  /// A service message in the learner's language.
+  String _say(SubscriptionMessage message) =>
+      message.resolve(AppLocalizations.of(context));
+
+  /// The line for a failure caught out of the service, whatever shape it took.
+  ///
+  /// A [SubscriptionMessageException] already names itself. Anything else goes
+  /// through the template it was raised against, which is how being offline
+  /// still reads as being offline rather than as "the plans could not load".
+  String _failure(String templateKey, Object e) =>
+      e is SubscriptionMessageException
+          ? _say(e.message)
+          : AiErrorMessageFormatter.intoTemplate(context.tr(templateKey), e);
 
   Future<void> _syncOwnedPurchasesIfNeeded() async {
     if (!mounted ||
@@ -198,7 +270,7 @@ class _NfSubscriptionPageState extends State<NfSubscriptionPage> {
       if (!mounted) return;
       setState(() => _isLoading = false);
       _showSnack(
-        AiErrorMessageFormatter.intoTemplate(context.tr('subscription.err.load'), e),
+        _failure('subscription.err.load', e),
         error: true,
       );
     }
@@ -441,7 +513,7 @@ class _NfSubscriptionPageState extends State<NfSubscriptionPage> {
       _pendingPurchasePlanName = null;
       setState(() => _isPurchasing = false);
       _showSnack(
-        AiErrorMessageFormatter.intoTemplate(context.tr('subscription.err.payment'), e),
+        _failure('subscription.err.payment', e),
         error: true,
       );
     }
@@ -467,7 +539,7 @@ class _NfSubscriptionPageState extends State<NfSubscriptionPage> {
       if (!mounted) return;
       setState(() => _isPurchasing = false);
       _showSnack(
-        AiErrorMessageFormatter.intoTemplate(context.tr('subscription.err.demo'), e),
+        _failure('subscription.err.demo', e),
         error: true,
       );
     }
@@ -496,7 +568,7 @@ class _NfSubscriptionPageState extends State<NfSubscriptionPage> {
       if (!mounted) return;
       setState(() => _isPurchasing = false);
       _showSnack(
-        AiErrorMessageFormatter.intoTemplate(context.tr('subscription.err.restore'), e),
+        _failure('subscription.err.restore', e),
         error: true,
       );
     }
@@ -745,15 +817,7 @@ class _NfSubscriptionPageState extends State<NfSubscriptionPage> {
                 : () => _startPayment(selected),
           ),
           const SizedBox(height: NfSpace.s12),
-          // The backend grants every new account a 7-day trial AI quota
-          // (FREE_TRIAL_7D); the paywall keeps naming it so the trial does
-          // conversion work instead of being given away silently.
-          Text(
-            key: const ValueKey('paywall-trial-note'),
-            context.tr('subscription.trialNote'),
-            textAlign: TextAlign.center,
-            style: NfTokens.body(size: NfFont.s12, color: t.inkFaint),
-          ),
+          PaywallTrialNote(trialWasBlocked: _trialWasBlocked),
         ],
         if ((Platform.isAndroid || Platform.isIOS) && _enableMobileIap) ...<Widget>[
           const SizedBox(height: NfSpace.s16),

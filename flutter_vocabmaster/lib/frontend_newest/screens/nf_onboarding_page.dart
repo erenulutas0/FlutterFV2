@@ -272,6 +272,17 @@ class _NfOnboardingFlowState extends State<_NfOnboardingFlow> {
     await profile.selectEnglishLevel(profile.englishLevel);
     await profile.selectLearningGoal(profile.learningGoal);
 
+    // These three writes are local, and they are all this page can do: the
+    // flow ends at the sign-in screen, so at this moment there is no account,
+    // no token, and no profile row to address — `PUT /language-profiles/{id}`
+    // needs an id that will not exist until registration creates the row.
+    //
+    // That row is a hardcoded Turkish → English, B1, and the home screen reads
+    // its level, so a beginner who chose A1 here used to be greeted with
+    // "English · B1". The answers above are sent at the first moment they can
+    // be: `AppStateProvider.loadLanguageProfiles` pushes them onto the row as
+    // soon as it has loaded it, which is the first sign-in after this page.
+
     await AnalyticsService.logLearningProfileUpdated(
       sourceLanguage: profile.sourceLanguage,
       englishLevel: profile.englishLevel,

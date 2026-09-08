@@ -95,8 +95,15 @@ class ApiService {
     final hasAuth = headers.containsKey('Authorization');
     final hasUserId = headers.containsKey('X-User-Id');
     if (!hasAuth || !hasUserId) {
+      // A diagnostic, not copy. This used to be the Turkish sentence
+      // "Oturum bulunamadi. Lutfen yeniden giris yapin.", and every screen
+      // that catches a 401 printed `message` straight into a snackbar -- so a
+      // German learner whose token had been cleared was told to sign in again
+      // in Turkish. What the reader sees now comes from
+      // AiErrorMessageFormatter.forUnauthorized in their own language; this
+      // string only ever reaches a log.
       throw ApiUnauthorizedException(
-        message: 'Oturum bulunamadi. Lutfen yeniden giris yapin.',
+        message: 'No auth context: token or user id is missing.',
         reason: 'missing-auth-context',
       );
     }

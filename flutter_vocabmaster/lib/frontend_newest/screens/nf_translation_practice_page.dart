@@ -338,11 +338,17 @@ class _NfTranslationPracticePageState extends State<NfTranslationPracticePage> {
         return;
       }
       if (!mounted) return;
+      // The template used to be filled with '$e', so the sentence around the
+      // failure was in the learner's language and the failure itself was a Dart
+      // exception carrying the server's Turkish: a German learner read
+      // "Prüfung fehlgeschlagen: Exception: AI çeviri kontrolü başarısız: 500".
       final String msg = e is ApiQuotaExceededException
           ? AiErrorMessageFormatter.forQuota(e)
-          : context
-              .tr('practice.translation.checkFailed')
-              .replaceAll('{e}', '$e');
+          : AiErrorMessageFormatter.intoTemplate(
+              context.tr('practice.translation.checkFailed'),
+              e,
+              placeholder: '{e}',
+            );
       _showError(msg);
     }
   }

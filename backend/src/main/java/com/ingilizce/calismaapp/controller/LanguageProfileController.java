@@ -55,7 +55,8 @@ public class LanguageProfileController {
             @RequestBody Map<String, String> payload) {
         try {
             return ResponseEntity.ok(languageProfileService.updateProfile(
-                    userId, id, payload.get("level"), payload.get("learningGoal")));
+                    userId, id, payload.get("level"), payload.get("learningGoal"),
+                    payload.get("sourceLanguage")));
         } catch (NoSuchElementException ex) {
             return ResponseEntity.notFound().build();
         }

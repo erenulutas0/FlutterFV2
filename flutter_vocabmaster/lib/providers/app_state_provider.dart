@@ -13,6 +13,7 @@ import '../models/word.dart';
 import '../models/sentence_view_model.dart';
 import '../models/xp_sources.dart';
 import '../services/groq_service.dart';
+import '../services/learning_language_service.dart';
 import '../services/locale_text_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -230,6 +231,7 @@ class AppStateProvider extends ChangeNotifier {
   List<LanguageProfile> _languageProfiles = [];
   bool _isLoadingLanguageProfiles = false;
   bool _isSwitchingProfile = false;
+  bool _isSyncingLearningProfile = false;
 
   List<LanguageProfile> get languageProfiles => _languageProfiles;
   bool get isLoadingLanguageProfiles => _isLoadingLanguageProfiles;
@@ -260,6 +262,85 @@ class AppStateProvider extends ChangeNotifier {
     } finally {
       _isLoadingLanguageProfiles = false;
       notifyListeners();
+    }
+
+    // Onboarding happens before there is an account, so the answers it collects
+    // have nowhere to go at the time they are given. This is the first moment
+    // they can be sent: the row exists, its id is known, and the learner is
+    // signed in. Deliberately after the finally above, so the list is already
+    // published and `isLoadingLanguageProfiles` is already false — the screens
+    // never wait on this.
+    await syncLearningProfileToServer();
+  }
+
+  /// Tells the server the level and goal the learner actually chose.
+  ///
+  /// The profile row is created at sign-up as a hardcoded Turkish → English,
+  /// B1 (`LanguageProfile.defaultEnglishProfile`), and nothing ever corrected
+  /// it: `createLanguageProfile` and `updateLanguageProfile` had no callers at
+  /// all. So an absolute beginner who picked A1 in onboarding was greeted on
+  /// the home screen by "English · B1" — read from that row — while Settings,
+  /// which reads the local answer, said A1. Two screens, one fact, disagreeing,
+  /// and the discouraging half of it is the one on the first screen after
+  /// sign-in.
+  ///
+  /// Only what the learner has answered is sent. [LearningLanguageService.currentProfile]
+  /// is the codebase's existing line between an answer and a guess — the
+  /// displayed defaults follow the interface language, and a guess written to
+  /// the server is how a Turkish learner's profile once became Spanish — and
+  /// the endpoint leaves out any field that is null, as does the server.
+  ///
+  /// Never throws and never blocks anything the learner is doing. The local
+  /// value is the one they gave and it stands whatever the network does; a
+  /// failed push is simply retried the next time the profile list loads.
+  ///
+  /// Returns true only when a request was made and the server accepted it.
+  /// False means there was nothing worth sending, or the send failed.
+  Future<bool> syncLearningProfileToServer() async {
+    final LanguageProfile? profile = activeProfile;
+    // No row means no id, and the endpoint is keyed by id. Nothing to do until
+    // the list has loaded — which is the caller of this method.
+    if (profile == null) return false;
+
+    // The stored answers describe the English profile; a future profile for
+    // another target language has its own level and must not be overwritten
+    // with this one.
+    if (profile.targetLanguage != LearningLanguageService.targetLanguage) {
+      return false;
+    }
+
+    final Map<String, String> answers = LearningLanguageService.currentProfile();
+    final String? level = answers['englishLevel'];
+    final String? goal = answers['learningGoal'];
+    if (level == null && goal == null) return false;
+
+    // The guard that keeps this off the hot path: it fires when a value has
+    // changed, not whenever something rebuilds or reloads. Once the row agrees
+    // with the learner there is nothing left to say and no request is made.
+    final bool levelAgrees = level == null || level == profile.level;
+    final bool goalAgrees = goal == null || goal == profile.learningGoal;
+    if (levelAgrees && goalAgrees) return false;
+
+    // Settings fires this on a change while a background load may be finishing
+    // one of its own; the two would send the same body twice.
+    if (_isSyncingLearningProfile) return false;
+    _isSyncingLearningProfile = true;
+    try {
+      final LanguageProfile updated = await _apiService.updateLanguageProfile(
+        profileId: profile.id,
+        level: level,
+        learningGoal: goal,
+      );
+      _languageProfiles = _languageProfiles
+          .map((p) => p.id == updated.id ? updated : p)
+          .toList();
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('Error syncing learning profile: $e');
+      return false;
+    } finally {
+      _isSyncingLearningProfile = false;
     }
   }
 

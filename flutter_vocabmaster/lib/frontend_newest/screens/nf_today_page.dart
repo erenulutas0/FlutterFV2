@@ -363,12 +363,35 @@ class _TodayModel {
     // exactly what the whole app means in that state.
     final LanguageProfile? profile = appState.activeProfile;
 
+    // The level is the one exception, and the learner's own answer wins it.
+    //
+    // `AppStateProvider.syncLearningProfileToServer` now pushes that answer
+    // onto the row, so in the ordinary case the two say the same thing. They
+    // disagree in the moments around the push: between the profile list
+    // arriving and the push landing, and for as long as a push keeps failing.
+    // What the row holds in that gap is not a stale answer but the hardcoded
+    // B1 the server writes at sign-up, and greeting someone who told us they
+    // are a beginner with "English · B1" is the discouraging half of a
+    // disagreement they can already see resolved in Settings.
+    //
+    // `currentProfile()` rather than the `englishLevel` getter, so an unanswered
+    // learner still gets the row: the getter cannot tell an answer from the
+    // guess it falls back to, and the row is the better guess of the two.
+    final String? answeredLevel =
+        LearningLanguageService.currentProfile()['englishLevel'];
+    // A future profile for another target language keeps its own level; the
+    // stored answer is about English.
+    final bool answerDescribesProfile = profile == null ||
+        profile.targetLanguage == LearningLanguageService.targetLanguage;
+
     return _TodayModel(
       isLoading:
           !appState.isInitialized || (appState.isLoadingWords && words.isEmpty),
       userName: appState.userName.trim(),
       streak: _asInt(stats['streak']),
-      cefrLevel: profile?.level ?? LearningLanguageService.englishLevel,
+      cefrLevel: (answerDescribesProfile ? answeredLevel : null) ??
+          profile?.level ??
+          LearningLanguageService.englishLevel,
       targetLanguage:
           profile?.targetLanguage ?? LearningLanguageService.targetLanguage,
       weekCompleted: weekCompleted,

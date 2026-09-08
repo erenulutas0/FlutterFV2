@@ -4,9 +4,64 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_config.dart';
+import '../l10n/app_localizations.dart';
 import 'auth_service.dart';
-import 'locale_text_service.dart';
+
+/// One thing the purchase flow has to say, named rather than written out.
+///
+/// This service used to hand finished sentences to the paywall through
+/// `LocaleTextService.pick(tr, en)` — Turkish when the app is `tr`, English
+/// otherwise. Every message the paywall DISPLAYS comes from here, so on the one
+/// screen where money changes hands the Spanish, German, French, Italian and
+/// Portuguese app spoke English: the confirmation dialog, the restore line and
+/// every purchase failure. The worst of them handed the buyer a Play Console
+/// debugging instruction naming the product id and the base plan.
+///
+/// A key rather than a sentence, because a service has no BuildContext and the
+/// screen that shows the message does. [args] fills the `{placeholders}` the
+/// key's own text declares.
+@immutable
+class SubscriptionMessage {
+  const SubscriptionMessage(this.key, {this.args = const <String, String>{}});
+
+  final String key;
+  final Map<String, String> args;
+
+  String resolve(AppLocalizations l10n) {
+    var text = l10n.t(key);
+    for (final MapEntry<String, String> arg in args.entries) {
+      text = text.replaceAll('{${arg.key}}', arg.value);
+    }
+    return text;
+  }
+
+  /// The key, so an analytics `reason` is a stable identifier rather than a
+  /// sentence that changes with the reader's language.
+  @override
+  String toString() => key;
+
+  @override
+  bool operator ==(Object other) =>
+      other is SubscriptionMessage &&
+      other.key == key &&
+      mapEquals(other.args, args);
+
+  @override
+  int get hashCode => Object.hash(key, Object.hashAllUnordered(args.entries));
+}
+
+/// A failure the purchase flow can name, thrown where the old code threw an
+/// `Exception` carrying a Turkish sentence.
+class SubscriptionMessageException implements Exception {
+  const SubscriptionMessageException(this.message);
+
+  final SubscriptionMessage message;
+
+  @override
+  String toString() => message.key;
+}
 
 class SubscriptionPlan {
   final int id;
@@ -72,12 +127,42 @@ class SubscriptionService {
   InAppPurchase get _inAppPurchase => InAppPurchase.instance;
 
   StreamSubscription<List<PurchaseDetails>>? _subscription;
-  Function(String message)? onPurchaseSuccess;
-  Function(String error)? onPurchaseError;
-  String? _lastVerificationError;
+  Function(SubscriptionMessage message)? onPurchaseSuccess;
+  Function(SubscriptionMessage error)? onPurchaseError;
+  SubscriptionMessage? _lastVerificationError;
   DateTime? _lastRestoreAttemptAt;
 
-  String _text(String tr, String en) => LocaleTextService.pick(tr, en);
+  /// Where the server's refusal of a new account's 7-day trial is kept.
+  ///
+  /// The backend decides at sign-up — a device that has already claimed one, an
+  /// address that has, or a Redis blip while it was checking — and says so once,
+  /// as `trialBlockedReason` in the login response. Nothing asks again, and the
+  /// account simply lands on the free tier. Until this key existed the paywall
+  /// had no way to know, so it went on offering "New accounts start with a
+  /// 7-day trial quota" to the one reader for whom that had just been refused.
+  static const String trialBlockedReasonKey =
+      'subscription:trial_blocked_reason';
+
+  /// Records what the login response said about this account's trial.
+  ///
+  /// Called on every successful sign-in, with null when the trial was granted,
+  /// so a second account on the same phone cannot inherit the first one's
+  /// verdict.
+  static Future<void> rememberTrialBlocked(String? reason) async {
+    final prefs = await SharedPreferences.getInstance();
+    final String trimmed = (reason ?? '').trim();
+    if (trimmed.isEmpty) {
+      await prefs.remove(trialBlockedReasonKey);
+      return;
+    }
+    await prefs.setString(trialBlockedReasonKey, trimmed);
+  }
+
+  /// Whether this account was refused the trial, and so must not be promised one.
+  static Future<bool> wasTrialBlocked() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getString(trialBlockedReasonKey) ?? '').trim().isNotEmpty;
+  }
 
   void initializePurchaseStream() {
     final purchaseUpdated = _inAppPurchase.purchaseStream;
@@ -148,10 +233,9 @@ class SubscriptionService {
     try {
       final available = await isIAPAvailable();
       if (!available) {
-        onPurchaseError?.call(_text(
-          'Uygulama ici satın alma su an kullanılamıyor.',
-          'In-app purchases are not available right now.',
-        ));
+        onPurchaseError?.call(
+          const SubscriptionMessage('subscription.err.iapUnavailable'),
+        );
         return false;
       }
 
@@ -161,10 +245,9 @@ class SubscriptionService {
           Platform.isIOS ? plan.appleProductId : plan.googlePlayProductId;
 
       if (productId.isEmpty) {
-        onPurchaseError?.call(_text(
-          'Bu plan için mağazada ürün bulunamadı.',
-          'No store product was found for this plan.',
-        ));
+        onPurchaseError?.call(
+          const SubscriptionMessage('subscription.err.planUnavailable'),
+        );
         return false;
       }
 
@@ -172,10 +255,20 @@ class SubscriptionService {
       final product = products.where((p) => p.id == productId).firstOrNull;
 
       if (product == null) {
-        onPurchaseError?.call(_text(
-          'Mağaza ürünü bulunamadı: $productId. Play Console ürünü/base planı aktif mi ve bu test hesabına açık mı kontrol edin.',
-          'Store product not found: $productId. Check that the Play Console product/base plan is active and available to this tester.',
-        ));
+        // The buyer used to be handed the console instruction that belongs in
+        // this log line: "Store product not found: pro_annual_subscription.
+        // Check that the Play Console product/base plan is active and
+        // available to this tester." Nothing in that sentence is actionable by
+        // the person reading it, and it was English in five of the seven
+        // languages the app ships.
+        debugPrint(
+          'Store product missing for plan ${plan.name}: $productId. Check that '
+          'the Play Console product/base plan is active and released to this '
+          'account.',
+        );
+        onPurchaseError?.call(
+          const SubscriptionMessage('subscription.err.planUnavailable'),
+        );
         return false;
       }
 
@@ -187,10 +280,9 @@ class SubscriptionService {
         purchaseParam: purchaseParam,
       );
       if (!started) {
-        onPurchaseError?.call(_text(
-          'Satın alma başlatılamadı.',
-          'The purchase could not be started.',
-        ));
+        onPurchaseError?.call(
+          const SubscriptionMessage('subscription.err.purchaseNotStarted'),
+        );
       }
       return started;
     } catch (e) {
@@ -212,10 +304,10 @@ class SubscriptionService {
       // Deliberately without the exception text. Pasting it here is what put
       // "BillingResponse.itemAlreadyOwned" on screen in red, under a dialog
       // that had already said the same thing in words.
-      onPurchaseError?.call(_text(
-        'Satın alma başlatılamadı. Lütfen biraz sonra tekrar dene.',
-        'The purchase could not be started. Please try again shortly.',
-      ));
+      debugPrint('Purchase could not be started: $e');
+      onPurchaseError?.call(
+        const SubscriptionMessage('subscription.err.purchaseNotStarted'),
+      );
       return false;
     }
   }
@@ -233,11 +325,21 @@ class SubscriptionService {
             _reportAlreadyOwned(false);
           }
         } else {
+          // The plugin's own `error.message` used to be the second fallback
+          // here. It is a Play SDK string — English at best, a billing
+          // constant at worst — so an unrecognised billing failure now says
+          // the one true thing we know instead, and the raw code goes to the
+          // log where it is useful.
           final mapped = _mapPlayStoreError(purchaseDetails.error);
+          if (mapped == null) {
+            debugPrint(
+              'Unmapped Play purchase error: code=${purchaseDetails.error?.code} '
+              'message=${purchaseDetails.error?.message}',
+            );
+          }
           onPurchaseError?.call(
             mapped ??
-                purchaseDetails.error?.message ??
-                _text('Satın alma hatası', 'Purchase error'),
+                const SubscriptionMessage('subscription.err.purchaseGeneric'),
           );
         }
         if (purchaseDetails.pendingCompletePurchase) {
@@ -253,22 +355,13 @@ class SubscriptionService {
           // congratulated the buyer of a plan they already had.
           onPurchaseSuccess?.call(
             purchaseDetails.status == PurchaseStatus.restored
-                ? _text(
-                    'Aboneliğin hesabına bağlandı.',
-                    'Your subscription is linked to this account.',
-                  )
-                : _text(
-                    'Aboneliğiniz başarıyla aktifleştirildi.',
-                    'Your subscription was activated successfully.',
-                  ),
+                ? const SubscriptionMessage('subscription.success.restored')
+                : const SubscriptionMessage('subscription.success.activated'),
           );
         } else {
           onPurchaseError?.call(
             _lastVerificationError ??
-                _text(
-                  'Satın alma doğrulanamadı.',
-                  'The purchase could not be verified.',
-                ),
+                const SubscriptionMessage('subscription.err.notVerified'),
           );
         }
 
@@ -297,10 +390,8 @@ class SubscriptionService {
           token = await _authService.getToken();
         }
         if (userId == null || userId <= 0) {
-          _lastVerificationError = _text(
-            'Kullanıcı kimliği bulunamadı. Lütfen tekrar deneyin.',
-            'Your account identity could not be resolved. Please try again.',
-          );
+          _lastVerificationError =
+              const SubscriptionMessage('subscription.err.noIdentity');
           debugPrint('Backend verification failed: missing userId');
           return false;
         }
@@ -312,19 +403,15 @@ class SubscriptionService {
           token = await _authService.getToken();
         }
         if (token == null || token.isEmpty) {
-          _lastVerificationError = _text(
-            'Oturum yenilenemedi. Lütfen satın alma ekranini tekrar açıp yeniden deneyin.',
-            'Your session could not be refreshed. Reopen the purchase screen and try again.',
-          );
+          _lastVerificationError =
+              const SubscriptionMessage('subscription.err.sessionRefresh');
           debugPrint('Backend verification failed: missing token');
           return false;
         }
       }
       if (purchaseToken.isEmpty) {
-        _lastVerificationError = _text(
-          'Satın alma tokeni boş geldi. Lütfen satın alımlarını geri yükleyin.',
-          'The purchase token is empty. Please restore your purchases and try again.',
-        );
+        _lastVerificationError =
+            const SubscriptionMessage('subscription.err.tokenMissing');
         debugPrint(
           'Backend verification failed: empty purchase token product=${purchaseDetails.productID}',
         );
@@ -389,10 +476,11 @@ class SubscriptionService {
       }
       return true;
     } catch (e) {
-      _lastVerificationError = _text(
-        'Dogrulama sırasında bağlantı hatası: $e',
-        'A connection error occurred during verification: $e',
-      );
+      // Without the exception. Interpolating it here is how the buyer of a
+      // plan read a SocketException, hostname and errno included, in the
+      // middle of a sentence about their payment.
+      _lastVerificationError =
+          const SubscriptionMessage('subscription.err.verifyConnection');
       debugPrint('Backend verification failed: $e');
       return false;
     }
@@ -413,10 +501,9 @@ class SubscriptionService {
     if (restoreStarted) {
       return;
     }
-    onPurchaseError?.call(_text(
-      'Bu plana zaten abonesin. Play Store > Ödemeler ve abonelikler bölümünden görebilirsin.',
-      'You are already subscribed to this plan. See it in Play Store > Payments & subscriptions.',
-    ));
+    onPurchaseError?.call(
+      const SubscriptionMessage('subscription.err.alreadyOwned'),
+    );
   }
 
   bool _isAlreadyOwnedError(IAPError? error) {
@@ -431,61 +518,50 @@ class SubscriptionService {
         message.contains('already owned');
   }
 
-  String? _mapPlayStoreError(IAPError? error) {
+  SubscriptionMessage? _mapPlayStoreError(IAPError? error) {
     if (error == null) {
       return null;
     }
     final code = error.code.toLowerCase();
     final message = error.message.toLowerCase();
     if (message.contains('pg-gemf-02') || code.contains('pg-gemf-02')) {
-      return _text(
-        'Google Play ödeme tarafında hata oluştu (PG-GEMF-02). Play hesabinizi kontrol edip satın alımlarını geri yükleyin ve tekrar deneyin.',
-        'Google Play returned a payment error (PG-GEMF-02). Check your Play account, restore purchases, and try again.',
-      );
+      return const SubscriptionMessage('subscription.err.playPayment');
     }
     if (code == 'error' || code.contains('billingresponse.error')) {
-      return _text(
-        'Google Play geçici hata verdi (BillingResponse.error). Lütfen 1-2 dakika sonra tekrar deneyin veya geri yükleme yapın.',
-        'Google Play returned a temporary error (BillingResponse.error). Please try again in 1-2 minutes or restore purchases.',
-      );
+      return const SubscriptionMessage('subscription.err.playTemporary');
     }
     return null;
   }
 
-  String? _mapRawPlayError(String rawError) {
+  /// The same three cases as [_mapPlayStoreError], read out of a raw exception
+  /// string rather than a structured [IAPError].
+  ///
+  /// Each situation answers with one key, shared with its structured twin.
+  /// Two wordings for one situation is how the buyer of an owned plan ended up
+  /// reading three messages for a single tap.
+  SubscriptionMessage? _mapRawPlayError(String rawError) {
     final lower = rawError.toLowerCase();
     if (lower.contains('pg-gemf-02')) {
-      return _text(
-        'Google Play ödeme tarafında hata oluştu (PG-GEMF-02). Play Store > Ödemeler ve abonelikler > Abonelikler ekranindan geri yükleyip tekrar deneyin.',
-        'Google Play returned a payment error (PG-GEMF-02). Restore the subscription from Play Store > Payments & subscriptions > Subscriptions, then try again.',
-      );
+      return const SubscriptionMessage('subscription.err.playPayment');
     }
     if (lower.contains('billingresponse.error') ||
         lower.contains('service unavailable')) {
-      return _text(
-        'Google Play geçici hata verdi (BillingResponse.error). Lütfen 1-2 dakika sonra tekrar deneyin.',
-        'Google Play returned a temporary error (BillingResponse.error). Please try again in 1-2 minutes.',
-      );
+      return const SubscriptionMessage('subscription.err.playTemporary');
     }
     if (lower.contains('itemalreadyowned') ||
         lower.contains('item_already_owned')) {
-      // Same sentence _reportAlreadyOwned uses. Two wordings for one situation
-      // is how the buyer of an owned plan ended up reading three messages.
-      return _text(
-        'Bu plana zaten abonesin. Play Store > Ödemeler ve abonelikler bölümünden görebilirsin.',
-        'You are already subscribed to this plan. See it in Play Store > Payments & subscriptions.',
-      );
+      return const SubscriptionMessage('subscription.err.alreadyOwned');
     }
     return null;
   }
 
   @visibleForTesting
-  String? debugMapPlayStoreError(IAPError? error) {
+  SubscriptionMessage? debugMapPlayStoreError(IAPError? error) {
     return _mapPlayStoreError(error);
   }
 
   @visibleForTesting
-  String? debugMapRawPlayError(String rawError) {
+  SubscriptionMessage? debugMapRawPlayError(String rawError) {
     return _mapRawPlayError(rawError);
   }
 
@@ -518,7 +594,8 @@ class SubscriptionService {
     }
   }
 
-  String _buildVerificationErrorMessage(int statusCode, String body) {
+  SubscriptionMessage _buildVerificationErrorMessage(
+      int statusCode, String body) {
     String? code;
     String? error;
     try {
@@ -534,58 +611,43 @@ class SubscriptionService {
 
     if (statusCode == 401 || statusCode == 403) {
       if (normalized.contains('user identity mismatch')) {
-        return _text(
-          'Hesap oturumu ile kullanıcı bilgisi eşleşmedi. Oturum otomatik yenileniyor; işlemi tekrar deneyin.',
-          'Your stored account data did not match the active session. The session is being repaired automatically; please try the purchase again.',
-        );
+        return const SubscriptionMessage('subscription.err.identityMismatch');
       }
-      return _text(
-        'Oturum dogrulama hatası. Lütfen tekrar deneyin. Sorun devam ederse uygulamayı yeniden acin.',
-        'Session verification failed. Please try again. If the issue continues, reopen the app and try once more.',
-      );
+      return const SubscriptionMessage('subscription.err.sessionVerify');
     }
     if (statusCode == 400 && normalized.contains('purchasetoken is required')) {
-      return _text(
-        'Satın alma tokeni eksik geldi. Abonelik sayfasından geri yükleme yapıp tekrar deneyin.',
-        'The purchase token was missing. Restore purchases from the subscription page and try again.',
-      );
+      return const SubscriptionMessage('subscription.err.tokenMissing');
     }
+    // Two distinct backend faults — the Play product has no mapping, or the
+    // plan the mapping names is gone — and one thing the buyer can do about
+    // either. The distinction is kept where it is useful, in the log.
     if (statusCode == 400 &&
-        normalized.contains('unable to map google product/base plan')) {
-      return _text(
-        'Play Console ürün-planı backend ile eşleşmedi. Destek ekibiyle iletişime geçin.',
-        'The Play Console product plan does not match the backend mapping. Please contact support.',
-      );
-    }
-    if (statusCode == 400 && normalized.contains('mapped plan not found')) {
-      return _text(
-        'Backend plan eslemesi eksik. Destek ekibiyle iletişime geçin.',
-        'The backend plan mapping is missing. Please contact support.',
-      );
+        (normalized.contains('unable to map google product/base plan') ||
+            normalized.contains('mapped plan not found'))) {
+      debugPrint('Subscription plan mapping rejected by backend: $body');
+      return const SubscriptionMessage('subscription.err.planMapping');
     }
     if (statusCode == 400 && code == 'INVALID_PURCHASE') {
-      return _text(
-        'Google satın alma kaydı doğrulanamadı. Satın alma gecmisiyle tekrar deneyin.',
-        'Google could not verify this purchase. Please try again from your purchase history.',
-      );
+      return const SubscriptionMessage('subscription.err.invalidPurchase');
     }
     if (statusCode == 503 && code == 'PROVIDER_UNAVAILABLE') {
-      return _text(
-        'Google dogrulama servisi su an ulaşılamıyor. Biraz sonra tekrar deneyin.',
-        'The Google verification service is currently unavailable. Please try again shortly.',
-      );
+      return const SubscriptionMessage('subscription.err.providerUnavailable');
     }
+    // The server's own `error` string used to be pasted in here. It is written
+    // for whoever reads the logs, in English, and it reached the buyer inside
+    // an otherwise translated sentence.
     if (error != null && error.isNotEmpty) {
-      return _text('Dogrulama hatası: $error', 'Verification error: $error');
+      debugPrint('Unmapped verification error from backend: $error');
     }
-    return _text(
-      'Satın alma doğrulanamadı (HTTP $statusCode).',
-      'The purchase could not be verified (HTTP $statusCode).',
+    return SubscriptionMessage(
+      'subscription.err.verifyFailed',
+      args: {'code': '$statusCode'},
     );
   }
 
   @visibleForTesting
-  String debugBuildVerificationErrorMessage(int statusCode, String body) {
+  SubscriptionMessage debugBuildVerificationErrorMessage(
+      int statusCode, String body) {
     return _buildVerificationErrorMessage(statusCode, body);
   }
 
@@ -599,12 +661,20 @@ class SubscriptionService {
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         return data.map((json) => SubscriptionPlan.fromJson(json)).toList();
-      } else {
-        throw Exception(
-            'Paketler yüklenemedi: HTTP ${response.statusCode} at $url');
       }
+      debugPrint('Plans request failed: HTTP ${response.statusCode} at $url');
+      throw const SubscriptionMessageException(
+        SubscriptionMessage('subscription.err.plansLoad'),
+      );
+    } on SubscriptionMessageException {
+      rethrow;
     } catch (e) {
-      throw Exception('Bağlantı hatası: $e (URL: $url)');
+      // The original failure travels on rather than being wrapped: being
+      // offline is the commonest way to land here, and only the exception
+      // itself still says so. AiErrorMessageFormatter names that case; a
+      // wrapper would have flattened it into "the plans could not be loaded".
+      debugPrint('Plans request failed for $url: $e');
+      rethrow;
     }
   }
 
@@ -623,10 +693,9 @@ class SubscriptionService {
     }
 
     if (userId == null || userId <= 0) {
-      throw Exception(_text(
-        'Kullanıcı oturumu bulunamadı.',
-        'The account session could not be resolved.',
-      ));
+      throw const SubscriptionMessageException(
+        SubscriptionMessage('common.err.sessionExpired'),
+      );
     }
 
     Future<http.Response> sendStatusRequest(String? bearerToken) {
@@ -660,7 +729,7 @@ class SubscriptionService {
       return json.decode(response.body);
     }
 
-    throw Exception(
+    throw SubscriptionMessageException(
       _buildVerificationErrorMessage(response.statusCode, response.body),
     );
   }
@@ -689,9 +758,12 @@ class SubscriptionService {
       }
       return json.decode(response.body);
     } else {
-      final errorBody = json.decode(response.body);
-      final error = errorBody['error'] ?? 'Demo aktivasyon başarısız';
-      throw Exception(error);
+      debugPrint(
+        'Demo activation failed: status=${response.statusCode} body=${response.body}',
+      );
+      throw const SubscriptionMessageException(
+        SubscriptionMessage('subscription.err.demoFailed'),
+      );
     }
   }
 }

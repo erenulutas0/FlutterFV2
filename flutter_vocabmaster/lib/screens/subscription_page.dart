@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:provider/provider.dart';
+import '../l10n/app_localizations.dart';
 import '../providers/app_state_provider.dart';
 import '../services/auth_service.dart';
 import '../services/analytics_service.dart';
@@ -55,35 +56,26 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
       _pendingPurchasePlanName = null;
       await _loadPlans();
       if (!mounted) return;
-      _showSuccessDialog(message);
+      _showSuccessDialog(message.resolve(AppLocalizations.of(context)));
     };
     _subscriptionService.onPurchaseError = (error) {
       if (!mounted) return;
       AnalyticsService.logPurchaseFailed(
         planName: _pendingPurchasePlanName,
-        reason: error,
+        reason: error.key,
       );
       _pendingPurchasePlanName = null;
-      final lower = error.toLowerCase();
-      final syncing =
-          lower.contains('senkronize') || lower.contains('aktariliyor');
       setState(() => _isPurchasing = false);
+      // The amber "still syncing" branch that used to live here decided by
+      // searching the message for "senkronize" or "aktariliyor". No message
+      // carries either word any more, so it never ran; every message that
+      // arrives here is a purchase that did not happen.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error),
-          backgroundColor: syncing ? Colors.orange : Colors.red,
+          content: Text(error.resolve(AppLocalizations.of(context))),
+          backgroundColor: Colors.red,
         ),
       );
-      if (syncing) {
-        Future.delayed(
-          const Duration(seconds: 2),
-          () async {
-            if (mounted) {
-              await _loadPlans();
-            }
-          },
-        );
-      }
     };
   }
 

@@ -9,10 +9,32 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../frontend_newest/nf_shell.dart';
 import '../app_navigator.dart';
+import '../l10n/app_localizations.dart';
 import 'analytics_service.dart';
 import 'locale_text_service.dart';
 
 class LocalReminderService {
+  /// One line of notification copy, in whatever language the app is set to.
+  ///
+  /// Same shape as `AiErrorMessageFormatter._t`, and for the same reason: a
+  /// notification is armed from a scheduler, outside any widget tree, so there
+  /// is no BuildContext to read a locale from. The stored app language is what
+  /// the learner picked, and it is available everywhere.
+  ///
+  /// All four reminders here used to call `LocaleTextService.pick(tr, en)`,
+  /// which has exactly two answers for an app that ships seven languages — and
+  /// all four default to ON and are armed at startup, so a German learner who
+  /// had never opened the notification settings still got English push copy
+  /// from a German app.
+  @visibleForTesting
+  static String copy(String key, {Map<String, String> args = const {}}) {
+    var text = AppLocalizations(Locale(LocaleTextService.appLanguageCode)).t(key);
+    for (final MapEntry<String, String> arg in args.entries) {
+      text = text.replaceAll('{${arg.key}}', arg.value);
+    }
+    return text;
+  }
+
   static const String dailyReminderKey = 'notifications:daily_reminder_enabled';
 
   /// Each reminder answers to its own switch.
@@ -274,10 +296,7 @@ class LocalReminderService {
       // The old copy was one hardcoded English sentence sent to an audience learning
       // English *from Turkish*. Being unable to read your own reminder is a strange way
       // to be reminded.
-      LocaleTextService.pick(
-        'Bugünün pratiği seni bekliyor.',
-        'A quick practice session is ready for today.',
-      ),
+      copy('notif.push.daily.body'),
       _nextReminderTime(),
       _notificationDetails(),
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
@@ -313,11 +332,13 @@ class LocalReminderService {
 
     await _notifications.zonedSchedule(
       _streakGuardReminderId,
-      LocaleTextService.pick('Serini kaybetme', 'Keep your streak alive'),
-      LocaleTextService.pick(
-        'Kısa bir pratik $streak günlük serini korur.',
-        'A short KlioAI practice today keeps your $streak-day streak safe.',
-      ),
+      copy('notif.push.streak.title'),
+      // A one-day streak is the commonest one there is -- it is what everybody
+      // has on their second day -- so the singular has its own line rather than
+      // reading "your 1-day streak".
+      streak == 1
+          ? copy('notif.push.streak.body.one')
+          : copy('notif.push.streak.body', args: {'n': '$streak'}),
       scheduled,
       _notificationDetails(),
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
@@ -342,14 +363,13 @@ class LocalReminderService {
 
     await _notifications.zonedSchedule(
       _trialExpiryReminderId,
-      LocaleTextService.pick(
-        'Deneme sürenin sonuna yaklaşıyorsun',
-        'Your KlioAI trial is ending soon',
-      ),
-      LocaleTextService.pick(
-        'AI pratiğini kesintisiz kullanmak için $daysRemaining günün kaldı.',
-        'You have $daysRemaining day${daysRemaining == 1 ? '' : 's'} left to use AI practice without interruption.',
-      ),
+      copy('notif.push.trial.title'),
+      // The English copy carried its own plural rule inline; every other
+      // language needs one of its own, so the singular is a key like any other
+      // sentence.
+      daysRemaining == 1
+          ? copy('notif.push.trial.body.one')
+          : copy('notif.push.trial.body', args: {'n': '$daysRemaining'}),
       _trialExpiryReminderTime(daysRemaining),
       _notificationDetails(),
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
@@ -366,12 +386,16 @@ class LocalReminderService {
   /// generic reminder cannot do that.
   ///
   /// [word] is chosen by the caller, which knows the vocabulary; this service only knows
-  /// how to schedule. [isTurkish] picks the copy language.
+  /// how to schedule. The copy language comes from the stored app language.
   ///
   /// One per day, at [_wordRecallHour], and only if the user has left the switch on.
+  /// [isTurkish] is ignored and kept only so the existing call site still
+  /// compiles. A Turkish-or-English flag cannot say which of seven languages
+  /// to write in; the app language answers that now, and the argument can be
+  /// dropped from the caller whenever that file is next touched.
   Future<void> scheduleWordRecallReminder({
     required String word,
-    required bool isTurkish,
+    bool? isTurkish,
     String? wordId,
   }) async {
     await initialize();
@@ -384,19 +408,14 @@ class LocalReminderService {
     // Two phrasings, alternating by day so the notification does not read like a form
     // letter. Both ask for recall rather than announcing something.
     final askMeaning = DateTime.now().day.isEven;
-    final title = isTurkish ? 'Bunu hatirliyor musun?' : 'Do you remember this one?';
-    final body = askMeaning
-        ? (isTurkish
-            ? '"$trimmed" ne demekti? Hatirlayip kontrol et.'
-            : 'What did "$trimmed" mean? Try to recall, then check.')
-        : (isTurkish
-            ? '"$trimmed" kelimesini bir kez tekrar edelim mi?'
-            : 'Shall we run through "$trimmed" once?');
 
     await _notifications.zonedSchedule(
       _wordRecallReminderId,
-      title,
-      body,
+      copy('notif.push.recall.title'),
+      copy(
+        askMeaning ? 'notif.push.recall.meaning' : 'notif.push.recall.review',
+        args: {'word': trimmed},
+      ),
       _nextWordRecallTime(),
       _notificationDetails(),
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,

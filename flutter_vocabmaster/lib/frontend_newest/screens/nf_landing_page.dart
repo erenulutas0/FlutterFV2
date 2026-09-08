@@ -9,6 +9,7 @@ import '../../main.dart';
 import '../../providers/app_state_provider.dart';
 import '../../services/analytics_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/subscription_service.dart';
 import '../theme/nf_theme_scope.dart';
 import '../theme/nf_tokens.dart';
 import '../widgets/nf_button.dart';
@@ -115,6 +116,18 @@ class _NfLandingViewState extends State<_NfLandingView> {
       await AnalyticsService.logLoginCompleted(
         method: 'google',
         userId: userId,
+      );
+
+      // The server can refuse a new account's 7-day trial — a device or an
+      // address that has already claimed one, or a Redis blip while it was
+      // checking — and it reports that exactly once, here, as
+      // `trialBlockedReason`. Nothing read it, so the account went quietly onto
+      // the free tier while the paywall carried on promising "New accounts
+      // start with a 7-day trial quota" to the one person for whom it had just
+      // been refused. Written on every sign-in, refusal or not, so a second
+      // account on a shared phone does not inherit the first one's verdict.
+      await SubscriptionService.rememberTrialBlocked(
+        result['trialBlockedReason']?.toString(),
       );
 
       if (!mounted) return;

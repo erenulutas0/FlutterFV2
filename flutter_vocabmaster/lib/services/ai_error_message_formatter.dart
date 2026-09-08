@@ -35,6 +35,19 @@ class AiErrorMessageFormatter {
         reason == 'user-burst' ||
         reason == 'ip-burst') {
       buffer.write(_t('ai.err.requestLimit'));
+    } else if (reason == 'non-paid-device-token-quota') {
+      // A ceiling shared by every free account on this phone, not the
+      // learner's own allowance. The server answers both of these with the
+      // Turkish sentence "your daily AI quota is finished", which was printed
+      // verbatim by the fall-through below -- wrong in two ways at once: in a
+      // language the reader may not have, and about a limit that is not
+      // theirs. Someone who has asked for nothing all day would read that they
+      // had used everything up.
+      buffer.write(_t('ai.err.sharedDeviceQuota'));
+    } else if (reason == 'non-paid-ip-token-quota') {
+      // The same ceiling, counted per network: a classroom, an office or a
+      // household on one connection share it.
+      buffer.write(_t('ai.err.sharedNetworkQuota'));
     } else if (reason == 'redis-fail-closed') {
       // Not the learner's allowance at all: the server reports this case with
       // a message claiming the daily quota is finished, and saying so would be
@@ -116,11 +129,33 @@ class AiErrorMessageFormatter {
   static String? _specificFor(Object e) {
     if (e is ApiQuotaExceededException) return forQuota(e);
     if (e is ApiUpgradeRequiredException) return forUpgrade(e);
+    if (e is ApiUnauthorizedException) return forUnauthorized(e);
     if (e is ApiAiServiceException) return _t('ai.err.aiService');
     if (looksOffline(e)) return _t('common.err.offline');
     if (looksTimedOut(e)) return _t('common.err.timeout');
     return null;
   }
+
+  /// What to tell someone whose session is no longer accepted.
+  ///
+  /// Never [ApiUnauthorizedException.message]. That field carries whatever the
+  /// server or the client happened to write: Spring's entry point answers an
+  /// expired JWT with `{"error":"Unauthorized"}`, so the app showed a red
+  /// snackbar reading the single English word "Unauthorized" and then signed
+  /// the learner out — and the client's own missing-token check threw a
+  /// Turkish sentence that was shown just as literally. Neither is a sentence
+  /// anyone should read, and neither is in the reader's language.
+  ///
+  /// The 401 that means "pay for this" is told apart by
+  /// `AiPaywallHandler.shouldOpenSubscriptionForUnauthorized`, which reads the
+  /// reason rather than the prose; everything else is an ended session, and
+  /// there is only one useful thing to say about that.
+  static String forUnauthorized(ApiUnauthorizedException e) =>
+      _t('common.err.sessionExpired');
+
+  /// The line for a 401 that the classifier read as a billing refusal rather
+  /// than an ended session, so the same key answers here as for a plain 403.
+  static String forSubscriptionRequired() => _t('ai.err.subscriptionRequired');
 
   static String forUpgrade(ApiUpgradeRequiredException e) {
     final reason = (e.reason ?? '').trim().toLowerCase();

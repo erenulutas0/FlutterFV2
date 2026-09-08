@@ -113,9 +113,27 @@ class LanguageProfileControllerTest {
     }
 
     @Test
+    void update_PassesTheSpokenLanguageThrough() throws Exception {
+        // The row is created at sign-up saying "Turkish" and nothing could move it, so
+        // every account on the server claimed a Turkish speaker -- including the ones
+        // arriving from a Spanish-language store listing.
+        when(languageProfileService.updateProfile(1L, 5L, null, null, "Spanish"))
+                .thenReturn(profile(5L, "English", true));
+
+        mockMvc.perform(put("/api/language-profiles/5")
+                        .header("X-User-Id", "1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sourceLanguage\":\"Spanish\"}"))
+                .andExpect(status().isOk());
+
+        verify(languageProfileService).updateProfile(1L, 5L, null, null, "Spanish");
+    }
+
+    @Test
     void update_Returns200_Or404ForAnotherUsersProfile() throws Exception {
-        when(languageProfileService.updateProfile(1L, 5L, "C1", null)).thenReturn(profile(5L, "English", true));
-        when(languageProfileService.updateProfile(1L, 99L, "C1", null))
+        when(languageProfileService.updateProfile(1L, 5L, "C1", null, null))
+                .thenReturn(profile(5L, "English", true));
+        when(languageProfileService.updateProfile(1L, 99L, "C1", null, null))
                 .thenThrow(new NoSuchElementException("Language profile not found: 99"));
 
         mockMvc.perform(put("/api/language-profiles/5")

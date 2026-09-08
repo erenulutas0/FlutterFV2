@@ -293,6 +293,16 @@ class NfSettingsPage extends StatelessWidget {
       label: (String value) => _learningLanguageLabel(context, value),
       onSelect: (String value) async {
         await provider.selectSourceLanguage(value);
+        // No server push here, unlike the level and the goal below.
+        // `PUT /language-profiles/{id}` accepts level and learningGoal only
+        // (LanguageProfileService.updateProfile), and a second row cannot carry
+        // it either: the target language is unique per user, so posting another
+        // English profile is a 409. The native language does still reach the
+        // server on every AI request, in the body
+        // `LearningLanguageService.currentProfile()` builds, which is what
+        // decides the language meanings and corrections come back in. Only the
+        // stored `source_language` column stays behind, and nothing on screen
+        // reads it.
         if (context.mounted) {
           _showMessage(context, changed);
         }
@@ -309,6 +319,7 @@ class NfSettingsPage extends StatelessWidget {
   Future<void> _pickEnglishLevel(BuildContext context) async {
     final LearningLanguageProvider provider =
         context.read<LearningLanguageProvider>();
+    final AppStateProvider appState = context.read<AppStateProvider>();
     final String changed = context.tr('settings.learning.sourceChanged');
 
     await _showPickerSheet(
@@ -319,6 +330,15 @@ class NfSettingsPage extends StatelessWidget {
       label: (String value) => value,
       onSelect: (String value) async {
         await provider.selectEnglishLevel(value);
+        // Unawaited, like the daily-words refresh above: the answer is already
+        // stored and shown, and the sheet must not sit on a network round trip
+        // to close. The push never throws, and a failure leaves the local value
+        // alone to be retried when the profile list next loads.
+        //
+        // Without it the level lived only on this device. The home screen reads
+        // the server's row, so changing A1 to B2 here left the header still
+        // saying B1 — the value nobody chose — until the app was reinstalled.
+        unawaited(appState.syncLearningProfileToServer());
         if (context.mounted) {
           _showMessage(context, changed);
         }
@@ -335,6 +355,7 @@ class NfSettingsPage extends StatelessWidget {
   Future<void> _pickLearningGoal(BuildContext context) async {
     final LearningLanguageProvider provider =
         context.read<LearningLanguageProvider>();
+    final AppStateProvider appState = context.read<AppStateProvider>();
     final String changed = context.tr('settings.learning.sourceChanged');
 
     await _showPickerSheet(
@@ -345,6 +366,9 @@ class NfSettingsPage extends StatelessWidget {
       label: (String value) => _learningGoalLabel(context, value),
       onSelect: (String value) async {
         await provider.selectLearningGoal(value);
+        // Same reasoning as the level above: local first, server after, and a
+        // failure changes nothing the learner can see.
+        unawaited(appState.syncLearningProfileToServer());
         if (context.mounted) {
           _showMessage(context, changed);
         }

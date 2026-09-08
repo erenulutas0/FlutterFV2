@@ -162,6 +162,56 @@ class LanguageProfileServiceTest {
     }
 
     @Test
+    void updateProfile_CanMoveTheLanguageTheLearnerSpeaks() {
+        // Nothing could. The row is created at sign-up with the default "Turkish", this
+        // method took only a level and a goal, and a second row cannot carry a different
+        // source either -- target_language is unique per user, so a second English profile
+        // is a 409. Every account on the server therefore claimed a Turkish speaker,
+        // including the ones this app is now being advertised to in Spanish.
+        LanguageProfile profile = new LanguageProfile(USER_ID, "Turkish", "English", "B1", "Exam", true);
+        profile.setId(3L);
+        when(repository.findByIdAndUserId(3L, USER_ID)).thenReturn(Optional.of(profile));
+
+        service.updateProfile(USER_ID, 3L, null, null, "Spanish");
+
+        assertEquals("Spanish", profile.getSourceLanguage());
+        // Only the source moves. target_language is the unique key, and changing it here
+        // would collide with the learner's other profiles.
+        assertEquals("English", profile.getTargetLanguage());
+        assertEquals("B1", profile.getLevel());
+        assertEquals("Exam", profile.getLearningGoal());
+    }
+
+    @Test
+    void updateProfile_LeavesTheLanguageAloneWhenNoneIsGiven() {
+        // The four-argument overload every existing caller uses, and the null case of the
+        // five-argument one: a caller that says nothing about the language must not be
+        // read as asking for the default back.
+        LanguageProfile profile = new LanguageProfile(USER_ID, "German", "English", "B1", null, true);
+        profile.setId(3L);
+        when(repository.findByIdAndUserId(3L, USER_ID)).thenReturn(Optional.of(profile));
+
+        service.updateProfile(USER_ID, 3L, "B2", null);
+        assertEquals("German", profile.getSourceLanguage());
+
+        service.updateProfile(USER_ID, 3L, null, null, null);
+        assertEquals("German", profile.getSourceLanguage());
+    }
+
+    @Test
+    void updateProfile_RefusesALanguageItCannotStore() {
+        // The same validator createProfile uses. A name nothing downstream recognises is
+        // a 400 rather than a row that quietly stops deciding anything.
+        LanguageProfile profile = new LanguageProfile(USER_ID, "Turkish", "English", "B1", null, true);
+        profile.setId(3L);
+        when(repository.findByIdAndUserId(3L, USER_ID)).thenReturn(Optional.of(profile));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.updateProfile(USER_ID, 3L, null, null, "   "));
+        assertEquals("Turkish", profile.getSourceLanguage());
+    }
+
+    @Test
     void updateProfile_OfAnotherUsersProfile_IsNotFound() {
         when(repository.findByIdAndUserId(3L, USER_ID)).thenReturn(Optional.empty());
 

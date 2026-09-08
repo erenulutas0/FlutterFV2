@@ -224,6 +224,26 @@ public class LanguageProfileService {
      * goal clears it, because "no goal" is a valid state and the column is nullable.
      */
     public LanguageProfile updateProfile(Long userId, Long profileId, String level, String learningGoal) {
+        return updateProfile(userId, profileId, level, learningGoal, null);
+    }
+
+    /**
+     * @param sourceLanguage the language the learner speaks, or null to leave it alone.
+     *
+     * <p>Added because nothing could move it. The row is created at sign-up with the
+     * default "Turkish", and a learner who says otherwise cannot be recorded: this method
+     * took only a level and a goal, and a second row cannot carry a different source
+     * either, since target_language is unique per user and a second English profile is a
+     * 409. So every account on the server claimed a Turkish speaker.
+     *
+     * <p>It is a fallback rather than the value in play -- the AI requests carry the
+     * profile in their body -- but it is what the server falls back TO when a client sends
+     * none, and answering a Spanish learner in Turkish is the failure the correction note
+     * exists to end. Only source_language moves; target_language is the unique key and
+     * changing it here would collide with the learner's other profiles.
+     */
+    public LanguageProfile updateProfile(Long userId, Long profileId, String level, String learningGoal,
+            String sourceLanguage) {
         LanguageProfile profile = getProfile(userId, profileId)
                 .orElseThrow(() -> new NoSuchElementException("Language profile not found: " + profileId));
         if (level != null) {
@@ -231,6 +251,11 @@ public class LanguageProfileService {
         }
         if (learningGoal != null) {
             profile.setLearningGoal(normalizeGoal(learningGoal));
+        }
+        if (sourceLanguage != null) {
+            // requireLanguage, the same validator createProfile uses: an unsupported name
+            // is a 400 here rather than a row nothing downstream can read.
+            profile.setSourceLanguage(requireLanguage(sourceLanguage, "sourceLanguage"));
         }
         return languageProfileRepository.save(profile);
     }
