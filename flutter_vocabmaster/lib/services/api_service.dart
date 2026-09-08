@@ -13,11 +13,32 @@ import 'auth_service.dart';
 import 'locale_text_service.dart';
 import 'learning_language_service.dart';
 
+/// What one refresh attempt established about the session.
+///
+/// It used to be a bool, and every non-200 meant false, and false meant "sign
+/// this person out". A backend deploy, a 502 from the proxy in front of a
+/// restarting container, a tunnel dropping mid-request — each of them ended a
+/// session that was perfectly alive. With a fifteen-minute access token there
+/// is always somebody refreshing during a deploy, so this was not a rare edge:
+/// it was a share of the users, every release.
+enum RefreshOutcome {
+  /// New tokens are stored; retry the call.
+  refreshed,
+
+  /// The server read the refresh token and refused it. Nothing will recover
+  /// this session.
+  rejected,
+
+  /// No verdict was reached. The token may well still be good, so the session
+  /// stands and only this one call fails.
+  unavailable,
+}
+
 class ApiService {
   final http.Client client;
   final String? _testBaseUrl;
   final AuthService _authService;
-  static Future<bool>? _refreshInFlight;
+  static Future<RefreshOutcome>? _refreshInFlight;
 
   /// Fired when a protected request terminally fails auth: the session
   /// existed but the token is dead AND the refresh could not recover it
@@ -112,11 +133,20 @@ class ApiService {
       return response;
     }
 
-    final refreshed = await _tryRefreshSessionCoalesced();
-    if (!refreshed) {
-      // Refresh exhausted: the session is unrecoverable. Signal the app to
-      // clear it and route to login instead of leaving the user stuck.
+    final RefreshOutcome outcome = await _tryRefreshSessionCoalesced();
+    if (outcome == RefreshOutcome.rejected) {
+      // The server looked at the refresh token and refused it. That session is
+      // unrecoverable: clear it and route to login rather than leave the user
+      // staring at a screen that will never load.
       _signalSessionExpired();
+      throw _unauthorizedFromResponse(response);
+    }
+    if (outcome == RefreshOutcome.unavailable) {
+      // No verdict: the backend is restarting, or the phone lost signal mid
+      // request. Every non-200 used to be read as "signed out", so a routine
+      // deploy — with an access token that lives fifteen minutes, there is
+      // always someone refreshing during one — logged real users out and made
+      // them sign in again. Fail this one call and keep the session.
       throw _unauthorizedFromResponse(response);
     }
 
@@ -235,7 +265,7 @@ class ApiService {
     return json.decode(response.body) as Map<String, dynamic>;
   }
 
-  Future<bool> _tryRefreshSessionCoalesced() async {
+  Future<RefreshOutcome> _tryRefreshSessionCoalesced() async {
     final current = _refreshInFlight;
     if (current != null) {
       return current;
@@ -252,11 +282,12 @@ class ApiService {
     }
   }
 
-  Future<bool> _tryRefreshSessionOnce() async {
+  Future<RefreshOutcome> _tryRefreshSessionOnce() async {
     try {
       final refreshToken = await _authService.getRefreshToken();
       if (refreshToken == null || refreshToken.isEmpty) {
-        return false;
+        // Nothing to recover with; this is as dead as a refusal.
+        return RefreshOutcome.rejected;
       }
 
       final url = await baseUrl;
@@ -274,13 +305,19 @@ class ApiService {
         }),
       );
 
+      if (refreshResponse.statusCode == 401 || refreshResponse.statusCode == 403) {
+        return RefreshOutcome.rejected;
+      }
       if (refreshResponse.statusCode != 200) {
-        return false;
+        // 5xx, 502 from a proxy in front of a restarting container, a captive
+        // portal's 200-shaped nonsense: none of these are a verdict about the
+        // token.
+        return RefreshOutcome.unavailable;
       }
 
       final decoded = json.decode(refreshResponse.body);
       if (decoded is! Map) {
-        return false;
+        return RefreshOutcome.unavailable;
       }
       final payload = Map<String, dynamic>.from(decoded);
       final newAccessToken =
@@ -288,7 +325,8 @@ class ApiService {
       final newRefreshToken =
           (payload['refreshToken'] ?? refreshToken).toString();
       if (newAccessToken == null || newAccessToken.isEmpty) {
-        return false;
+        // A 200 with no token is a server fault, not a dead session.
+        return RefreshOutcome.unavailable;
       }
 
       final currentUser = Map<String, dynamic>.from(
@@ -308,9 +346,11 @@ class ApiService {
         newRefreshToken,
         currentUser,
       );
-      return true;
+      return RefreshOutcome.refreshed;
     } catch (_) {
-      return false;
+      // A timeout, a dropped connection, a DNS failure. The token may well
+      // still be good; nothing here has established otherwise.
+      return RefreshOutcome.unavailable;
     }
   }
 

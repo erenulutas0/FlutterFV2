@@ -60,7 +60,8 @@ class AnnualPlanIsAYearTest {
                 "application-docker.properties"}) {
             assertEquals("PRO_ANNUAL", mappedPlan(profile, "pro_annual_subscription"),
                     "annual mapping in " + profile);
-            assertEquals("PREMIUM", mappedPlan(profile, "pro_monthly_subscription"),
+            // Each product books against the row whose card the buyer actually tapped.
+            assertEquals("PRO_MONTHLY", mappedPlan(profile, "pro_monthly_subscription"),
                     "monthly mapping in " + profile);
         }
     }
