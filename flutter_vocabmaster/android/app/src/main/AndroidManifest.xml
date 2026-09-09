@@ -15,11 +15,27 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="false">
+        <!--
+          No taskAffinity here. It was android:taskAffinity="" from the first
+          commit, and that is what put the sign-in and the purchase in a
+          different task from the app that started them.
+
+          An activity's default affinity is the applicationId, so every activity
+          the Play libraries contribute - SignInHubActivity from
+          play-services-auth, ProxyBillingActivity from billing - belongs to
+          "com.VocabMaster". MainActivity, declaring "", belonged to none of it.
+          Android can then restore that other task on its own and rebuild those
+          activities without the Intent extras they were handed, and each
+          dereferences exactly that in onCreate: getClass() on the missing
+          sign-in configuration, getIntentSender() on the missing PendingIntent.
+          Crashlytics showed both, as NullPointerExceptions inside third-party
+          onCreate, on the two screens every user has to pass through - signing
+          in, and paying.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
