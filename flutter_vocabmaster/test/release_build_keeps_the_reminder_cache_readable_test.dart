@@ -14,17 +14,21 @@ import 'package:flutter_test/flutter_test.dart';
 ///
 /// The plugin keeps its scheduled notifications as JSON and reads them back
 /// with `new TypeToken<ArrayList<NotificationDetails>>() {}`. Gson recovers the
-/// element type from that anonymous subclass's generic superclass; R8 merges
-/// the subclass away and the type goes with it. Flutter's Gradle plugin turns
+/// element type from that anonymous subclass's generic superclass, and R8
+/// truncates that signature to its raw type. Flutter's Gradle plugin turns
 /// minification on for `release` and leaves it off everywhere else, so this
 /// failed on every build a learner could install and no build anyone develops
-/// against.
+/// against. android/app/proguard-rules.pro carries the dexdump either side of
+/// the fix.
 ///
 /// What it cost was not only the reminder. Reading the AI entitlement scheduled
 /// the trial-expiry reminder in the same try block, ahead of storing what the
-/// server had just said about the learner's plan — so a subscriber's Pro state
-/// never reached the client, and the app went on showing the stale one it had
-/// cached. That is the second half of this file.
+/// server had just said — so the quota response was dropped on every launch,
+/// and with it trialDaysRemaining, which the Today page's trial notice is the
+/// only thing that reads. Nobody on a trial was warned it was ending. (The
+/// Profile page's plan label was never affected: it reads the quota endpoint
+/// itself and treats the merged copy as a fallback.) That is the second half of
+/// this file.
 ///
 /// Testing a build file is unusual and this earns it twice over: nothing else
 /// in the project reads either of these, both failures are silent, and both are
@@ -43,9 +47,20 @@ void main() {
               'release with none of the keeps this project needs');
     });
 
+    test('TypeToken itself is held still', () {
+      // The load-bearing rule, and the one that is easiest to delete because it
+      // looks redundant next to the next one. It is not: with only the subclass
+      // kept, R8 leaves the subclass and its Signature attribute in place and
+      // strips the type argument out of it -- `"Lk4/a;"` where the source said
+      // `TypeToken<ArrayList<NotificationDetails>>`. Gson then gets a plain
+      // Class from getGenericSuperclass() and throws the message that names
+      // shrinkers. Measured with dexdump on the shipped build; see the file's
+      // own comment for both dumps.
+      expect(rules.readAsStringSync(),
+          contains('-keep class com.google.gson.reflect.TypeToken { *; }'));
+    });
+
     test('anonymous TypeToken subclasses survive R8', () {
-      // The one rule the crash was actually about. Without it Gson is handed a
-      // raw TypeToken and cannot say what the list holds.
       expect(rules.readAsStringSync(),
           contains('-keep class * extends com.google.gson.reflect.TypeToken'));
     });
