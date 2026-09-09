@@ -224,6 +224,34 @@ public class ChatbotService {
    * <p>Takes the profile because the note is written in the learner's own language, and
    * nothing else in this prompt ever told the model what that language is.
    */
+  /**
+   * The one worked example's note, written in the language the note is asked for.
+   *
+   * <p>It used to be English, with a line underneath saying "that note is written in
+   * English only so you can see what belongs in it; write yours in Turkish". On a device a
+   * Turkish B2 learner said "I very like this app" and got back an English note. The prompt
+   * had asked for Turkish three separate times. An instruction argues and a demonstration
+   * shows, and when the two disagree a model follows the demonstration -- so the
+   * demonstration has to be in the language the answer is wanted in.
+   *
+   * <p>The same sentence in each, deliberately: it is the note for "I am boring", and what
+   * it teaches the model is the SHAPE -- name what the wrong words actually mean to a
+   * native speaker, then give the right word. English is the fallback because it is what
+   * the interface itself falls back to, so it is what that reader is already looking at.
+   */
+  private static String exampleNote(String nativeLanguage) {
+    return switch (nativeLanguage) {
+      case "Turkish" -> "\"I am boring\" karşındakini sıkıyorsun demek; senin hissettiğin şey \"bored\".";
+      case "German" -> "\"I am boring\" heißt, dass du andere langweilst; das Gefühl selbst heißt \"bored\".";
+      case "French" -> "\"I am boring\" veut dire que tu ennuies les autres ; le sentiment se dit \"bored\".";
+      case "Italian" -> "\"I am boring\" significa che annoi gli altri; il sentimento si dice \"bored\".";
+      case "Portuguese" -> "\"I am boring\" quer dizer que você entedia os outros; o sentimento é \"bored\".";
+      case "Spanish" -> "\"I am boring\" significa que aburres a los demás; el sentimiento es \"bored\".";
+      case "Indonesian" -> "\"I am boring\" artinya kamu membuat orang lain bosan; perasaannya \"bored\".";
+      default -> "\"I am boring\" means you make other people bored; the word for the feeling is \"bored\".";
+    };
+  }
+
   private static String fixInstructions(LearningLanguageProfile profile) {
     String nativeLanguage = profile.sourceLanguage();
     String level = profile.englishLevel();
@@ -255,15 +283,14 @@ HOW TO OFFER A CORRECTION:
   speaker. It is NEVER a translation of the corrected words -- the learner can already
   read those. ONE short sentence, no longer.
 - Worked example, for a learner who said "I am boring" and meant that they were bored:
-%s I am boring %s I'm bored %s "I am boring" means you make other people bored; the word for the feeling is "bored".
-  That note is written in English only so you can see what belongs in it. Write yours in %s.
+%s I am boring %s I'm bored %s %s
 %s
 - Correct only what they actually said. Never invent a mistake to have something to show.
 - One line at most, ever, and nothing after the note.
 """.formatted(
         FIX_MARKER, FIX_SEPARATOR, FIX_NOTE_SEPARATOR, nativeLanguage,
         FIX_NOTE_SEPARATOR, nativeLanguage, nativeLanguage,
-        FIX_MARKER, FIX_SEPARATOR, FIX_NOTE_SEPARATOR, nativeLanguage,
+        FIX_MARKER, FIX_SEPARATOR, FIX_NOTE_SEPARATOR, exampleNote(nativeLanguage),
         notePolicy);
   }
 

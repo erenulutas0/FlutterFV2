@@ -113,7 +113,10 @@ class ChatbotFixInstructionsTest {
         String spanish = fixInstructions(learner("Spanish", "B1"));
 
         assertThat(spanish).contains("written in Spanish");
-        assertThat(spanish).contains("Write yours in Spanish");
+        // "Write yours in Spanish" used to stand here, under an English example, as the
+        // hedge that made an English demonstration excusable. The example is Spanish now,
+        // so the hedge is gone and this asks the demonstration instead.
+        assertThat(spanish).contains("significa que aburres a los demás");
         assertThat(spanish).doesNotContain("Turkish");
 
         assertThat(fixInstructions(learner("German", "B1"))).contains("short note in German");
@@ -149,8 +152,50 @@ class ChatbotFixInstructionsTest {
         // Shown one, they do not.
         String text = fixInstructions();
 
-        assertThat(text).contains(
-                "[[FIX]] I am boring -> I'm bored || \"I am boring\" means you make other people bored");
+        assertThat(text).contains("[[FIX]] I am boring -> I'm bored || ");
+    }
+
+    @Test
+    @DisplayName("and it is written in the language the note is asked for")
+    void theExampleSpeaksTheLearnersLanguage() throws Exception {
+        // Seen on a device: a Turkish B2 learner said "I very like this app" and the card
+        // came back with an English note -- "\"very\" is not used before a verb" -- after a
+        // prompt that had asked for Turkish three separate times. The one worked example
+        // was English, with a line under it saying to write yours in Turkish. An
+        // instruction argues and a demonstration shows, and the model followed the
+        // demonstration.
+        assertThat(fixInstructions(learner("Turkish", "B1")))
+                .contains("karşındakini sıkıyorsun demek");
+        assertThat(fixInstructions(learner("Spanish", "B1")))
+                .contains("significa que aburres a los demás");
+        assertThat(fixInstructions(learner("German", "B1")))
+                .contains("dass du andere langweilst");
+
+        // And the hedge that stood in for it is gone: it existed only to excuse an
+        // example in the wrong language.
+        assertThat(fixInstructions(learner("Turkish", "B1")))
+                .doesNotContain("written in English only so you can see");
+    }
+
+    @Test
+    @DisplayName("every shipped language has its own example, and the rest fall back")
+    void everyShippedLanguageIsDemonstrated() throws Exception {
+        // Seven interface languages. A language with no example of its own would get an
+        // English one, which is the exact failure above -- so each is checked for a
+        // sentence that could not be English.
+        for (String language : new String[] {
+                "Turkish", "German", "French", "Italian", "Portuguese", "Spanish"}) {
+            String text = fixInstructions(learner(language, "B1"));
+
+            assertThat(text)
+                    .as("worked example for %s", language)
+                    .doesNotContain("means you make other people bored");
+        }
+
+        // English, and anything the app does not ship, read the English one: it is what
+        // the interface itself falls back to.
+        assertThat(fixInstructions(learner("English", "B1")))
+                .contains("means you make other people bored");
     }
 
     @Test
