@@ -347,6 +347,71 @@ void main() {
       expect(sentenceBody['translation'],
           'Bir köknar ağacının altında yaşıyorlardı.');
     });
+
+    testWidgets('the sentence is filed under a meaning, not left loose',
+        (WidgetTester tester) async {
+      // A definition is split into senses on its commas, so a one-line gloss
+      // comes back as two meanings. A sentence sent without one of their ids
+      // is attached to the word and to no sense of it: the word detail then
+      // draws it under "Unassigned sentences", with every meaning above it
+      // saying it has no sentence and a button asking the learner to file it.
+      // They tapped a word to read it, not to sort the deck afterwards.
+      final List<Map<String, dynamic>> bodies = <Map<String, dynamic>>[];
+
+      final ApiService api = ApiService(
+        baseUrl: base,
+        client: MockClient((http.Request request) async {
+          if (request.body.isNotEmpty) {
+            bodies.add(
+                Map<String, dynamic>.from(json.decode(request.body) as Map));
+          }
+          return http.Response(
+            json.encode(<String, Object?>{
+              'id': 78,
+              'englishWord': 'underneath',
+              'turkishMeaning': 'altında, alt kısmında',
+              'learnedDate': '2026-08-27',
+              'meanings': <Map<String, Object?>>[
+                <String, Object?>{
+                  'id': 640,
+                  'translation': 'altında',
+                  'position': 0,
+                },
+                <String, Object?>{
+                  'id': 641,
+                  'translation': 'alt kısmında',
+                  'position': 1,
+                },
+              ],
+            }),
+            201,
+            headers: <String, String>{'content-type': 'application/json'},
+          );
+        }),
+      );
+
+      await tester.pumpWidget(host(Scaffold(
+        body: NfWordSheet(
+          word: 'underneath',
+          sentence: 'They lived underneath a fir-tree.',
+          sentenceTranslation: null,
+          api: api,
+          onSaved: (_) {},
+          lookUp: (String w, String s) async => 'altında, alt kısmında',
+        ),
+      )));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Desteye ekle'));
+      await tester.pumpAndSettle();
+
+      final Map<String, dynamic> sentenceBody =
+          bodies.firstWhere((b) => b.containsKey('sentence'));
+      // The first sense. Where a comma-joined gloss is two near-synonyms it is
+      // as right as either, and a learner who disagrees moves it in two taps --
+      // which is one more decision than they get from an unassigned pile.
+      expect(sentenceBody['meaningId'], 640);
+    });
   });
 
   group('finishing a book', () {

@@ -294,6 +294,16 @@ class NfWordSheetState extends State<NfWordSheet> {
         wordId: word.id,
         sentence: widget.sentence,
         translation: widget.sentenceTranslation,
+        // Under the first meaning, not the word at large. The server splits a
+        // definition on its commas, so "keyif alıyor, hoşuna gidiyor" arrives
+        // as two senses, and a sentence attached to neither lands in the word
+        // detail's "unassigned" pile: every meaning then says it has no
+        // sentence, under a heading asking the learner to file this one. They
+        // tapped a word to read it, not to do the deck's bookkeeping. Where
+        // the senses are near-synonyms -- which is what a comma-joined gloss
+        // usually is -- the first is as right as any, and a learner who
+        // disagrees can move it in two taps.
+        meaningId: word.meanings.isEmpty ? null : word.meanings.first.id,
       );
       widget.onSaved(word);
       if (!mounted) return;

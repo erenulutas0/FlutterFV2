@@ -34,10 +34,12 @@ void main() {
   const String base = 'http://localhost:8080/api';
 
   late List<Map<String, Object?>> created;
+  late List<Map<String, Object?>> examples;
   late List<Word> adopted;
 
   setUp(() async {
     created = <Map<String, Object?>>[];
+    examples = <Map<String, Object?>>[];
     adopted = <Word>[];
     SharedPreferences.setMockInitialValues(<String, Object>{});
     FlutterSecureStorage.setMockInitialValues(<String, String>{});
@@ -53,9 +55,23 @@ void main() {
 
   /// Accepts word creations and records what was asked for. [failFirst] refuses
   /// the first one, so the retry path can be driven.
-  ApiService serving({bool failFirst = false}) => ApiService(
+  ApiService serving({bool failFirst = false, bool refuseExamples = false}) =>
+      ApiService(
         baseUrl: base,
         client: MockClient((http.Request request) async {
+          if (request.method == 'POST' &&
+              request.url.path.endsWith('/words/91/sentences')) {
+            examples.add(
+                Map<String, Object?>.from(json.decode(request.body) as Map));
+            if (refuseExamples) {
+              return http.Response('{"message":"nope"}', 500,
+                  headers: <String, String>{
+                    'content-type': 'application/json'
+                  });
+            }
+            return http.Response('{"id":91}', 201,
+                headers: <String, String>{'content-type': 'application/json'});
+          }
           if (request.method == 'POST' && request.url.path.endsWith('/words')) {
             final Map<String, Object?> body =
                 Map<String, Object?>.from(json.decode(request.body) as Map);
@@ -72,6 +88,16 @@ void main() {
                 'englishWord': body['englishWord'],
                 'turkishMeaning': body['turkishMeaning'],
                 'learnedDate': '2026-09-09',
+                // The server splits a meaning on its commas and hands back the
+                // senses it made. The sentence has to be filed under one of
+                // them or it lands in the word detail's unassigned pile.
+                'meanings': <Map<String, Object?>>[
+                  <String, Object?>{
+                    'id': 501,
+                    'translation': body['turkishMeaning'],
+                    'position': 0,
+                  },
+                ],
               }),
               201,
               headers: <String, String>{'content-type': 'application/json'},
@@ -87,6 +113,7 @@ void main() {
     TutorCorrection correction, {
     required ApiService api,
     bool alreadySaved = false,
+    String? saidInFull,
   }) async {
     await tester.pumpWidget(MaterialApp(
       locale: const Locale('en'),
@@ -104,6 +131,7 @@ void main() {
             width: 260,
             child: nfCorrectionCardForTest(
               correction,
+              saidInFull: saidInFull,
               api: api,
               alreadySaved: alreadySaved,
               onSaved: adopted.add,
@@ -239,5 +267,74 @@ void main() {
     expect(created, hasLength(2));
     expect(adopted, hasLength(1));
     expect(find.text('Kept in your deck'), findsOneWidget);
+  });
+
+  testWidgets('the phrase is kept with the sentence it was said in',
+      (WidgetTester tester) async {
+    // The card shows the smallest span that changed, and that is what goes in
+    // the deck: "I'm bored", meaning "boring describes the thing...". Reviewed
+    // on its own that is a fragment with a grammar note for an answer. The
+    // sentence that makes it a card worth having is the one they just said,
+    // fixed -- and it was on screen, in the bubble above, being thrown away.
+    await pump(tester, bored,
+        api: serving(), saidInFull: 'I am boring in this class.');
+
+    await tester.tap(find.text('Keep this phrase'));
+    await tester.pumpAndSettle();
+
+    expect(examples, hasLength(1));
+    expect(examples.single['sentence'], "I'm bored in this class.",
+        reason: 'the correction was not applied to the line they said');
+    // Under the meaning, not loose on the word. A sentence attached to no
+    // meaning shows up in the word detail as "unassigned", under every meaning
+    // saying it has no sentence, with a button asking the learner to file it.
+    expect(examples.single['meaningId'], 501);
+  });
+
+  testWidgets('a correction that covers the whole line adds no example',
+      (WidgetTester tester) async {
+    // Here the phrase IS the sentence. Attaching it to itself would show the
+    // learner the same words twice in review and call one of them an example.
+    await pump(tester, bored, api: serving(), saidInFull: 'I am boring');
+
+    await tester.tap(find.text('Keep this phrase'));
+    await tester.pumpAndSettle();
+
+    expect(created, hasLength(1));
+    expect(examples, isEmpty);
+  });
+
+  testWidgets('a line the span is not in is not reconstructed',
+      (WidgetTester tester) async {
+    // The model rewrote instead of quoting. Guessing where the fix belongs
+    // would file a sentence the learner never said, in their own deck, as
+    // something they said -- worse than no example at all.
+    await pump(tester, bored,
+        api: serving(), saidInFull: 'This lesson is so long and dull.');
+
+    await tester.tap(find.text('Keep this phrase'));
+    await tester.pumpAndSettle();
+
+    expect(created, hasLength(1));
+    expect(examples, isEmpty);
+  });
+
+  testWidgets('an example that will not attach does not fail the save',
+      (WidgetTester tester) async {
+    // The phrase is in the deck by the time the example is tried. Failing the
+    // whole save over it would tell the learner their correction was not kept
+    // while it sits in their words list, and there is nothing they could do
+    // about the difference anyway.
+    await pump(tester, bored,
+        api: serving(refuseExamples: true),
+        saidInFull: 'I am boring in this class.');
+
+    await tester.tap(find.text('Keep this phrase'));
+    await tester.pumpAndSettle();
+
+    expect(examples, hasLength(1), reason: 'the example was never tried');
+    expect(adopted, hasLength(1));
+    expect(find.text('Kept in your deck'), findsOneWidget);
+    expect(find.textContaining('Exception'), findsNothing);
   });
 }

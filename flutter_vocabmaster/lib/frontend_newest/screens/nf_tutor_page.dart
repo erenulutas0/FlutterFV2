@@ -1608,6 +1608,7 @@ class _TurnView extends StatelessWidget {
             constraints: BoxConstraints(maxWidth: maxWidth),
             child: _CorrectionNote(
               correction: fix,
+              saidInFull: turn.text,
               api: api,
               alreadySaved: correctionKept,
               onSaved: onCorrectionSaved,
@@ -1931,12 +1932,20 @@ class _WaveformPainter extends CustomPainter {
 class _CorrectionNote extends StatefulWidget {
   const _CorrectionNote({
     required this.correction,
+    required this.saidInFull,
     required this.api,
     this.alreadySaved = false,
     this.onSaved,
   });
 
   final TutorCorrection correction;
+
+  /// The whole line the learner said, of which [correction] is a span.
+  ///
+  /// The card shows the smallest thing that changed, which is the right thing
+  /// to show and the wrong thing to keep on its own: see
+  /// [_CorrectionNoteState._correctedSentence].
+  final String saidInFull;
 
   final ApiService api;
 
@@ -1978,6 +1987,42 @@ class _CorrectionNoteState extends State<_CorrectionNote> {
         .replaceAll('{said}', widget.correction.said);
   }
 
+  /// The learner's own sentence with the correction applied, or null when the
+  /// phrase is all there is to keep.
+  ///
+  /// The card shows the smallest span that changed -- "I very like" out of "I
+  /// very like this app." -- so what goes into the deck is a fragment whose
+  /// meaning is a grammar note. Reviewed on its own that is a card with no
+  /// context at all; the context is the sentence the learner just said, fixed,
+  /// and it is sitting in the bubble above the card.
+  ///
+  /// Null in the two cases where there is no honest sentence to add: when the
+  /// span is not in the line verbatim, because the model rewrote rather than
+  /// replaced and guessing where the fix belongs would put a sentence the
+  /// learner never said into their deck; and when the span IS the line, where
+  /// attaching it would show the same words twice and call one an example.
+  String? _correctedSentence() {
+    final String said = widget.correction.said.trim();
+    final String better = widget.correction.better.trim();
+    final String line = widget.saidInFull.trim();
+    if (said.isEmpty || better.isEmpty || line.isEmpty) {
+      return null;
+    }
+
+    // Case-insensitively, because a correction to the first word of a sentence
+    // comes back capitalised as the learner said it and lowercase as the model
+    // quotes it, and the two are the same span.
+    final int at = line.toLowerCase().indexOf(said.toLowerCase());
+    if (at < 0) {
+      return null;
+    }
+
+    final String fixed = line.replaceRange(at, at + said.length, better);
+    return _NfTutorPageState._deckKey(fixed) == _NfTutorPageState._deckKey(better)
+        ? null
+        : fixed;
+  }
+
   Future<void> _save() async {
     if (_saving || _saved || widget.alreadySaved) {
       return;
@@ -1985,6 +2030,7 @@ class _CorrectionNoteState extends State<_CorrectionNote> {
     // Read before the first await. Reaching for a localisation across an async
     // gap is how a screen ends up asking a disposed context for a string.
     final String meaning = _meaning(context);
+    final String? example = _correctedSentence();
 
     setState(() {
       _saving = true;
@@ -1997,10 +2043,23 @@ class _CorrectionNoteState extends State<_CorrectionNote> {
         addedDate: DateTime.now(),
         origin: WordOrigins.tutor,
       );
-      // No example sentence attached, unlike a word kept from a book. There the
-      // sentence is the context that makes a single word learnable; here the
-      // phrase IS the sentence, and adding it to itself would show the learner
-      // the same line twice in review and call one of them an example.
+      if (example != null) {
+        // Deliberately not fatal. The phrase is in the deck by this point, and
+        // failing the whole save over the example would tell a learner their
+        // correction was not kept while it sits in their words list. The
+        // example is what makes the card teachable, not what makes it exist.
+        try {
+          await widget.api.addSentenceToWord(
+            wordId: word.id,
+            sentence: example,
+            // Under the meaning, or it lands in the word detail's unassigned
+            // pile and the one meaning there says it has no sentence.
+            meaningId: word.meanings.isEmpty ? null : word.meanings.first.id,
+          );
+        } catch (_) {
+          // Nothing to tell them and nothing for them to do about it.
+        }
+      }
       widget.onSaved?.call(word);
       if (!mounted) return;
       setState(() {
@@ -2190,9 +2249,14 @@ Widget nfCorrectionCardForTest(
   ApiService? api,
   bool alreadySaved = false,
   void Function(Word word)? onSaved,
+  String? saidInFull,
 }) =>
     _CorrectionNote(
       correction: correction,
+      // Defaults to the span itself: the learner said exactly the thing that
+      // was corrected and there is no wider sentence to keep, which is the
+      // case the card has always drawn.
+      saidInFull: saidInFull ?? correction.said,
       api: api ?? ApiService(),
       alreadySaved: alreadySaved,
       onSaved: onSaved,
