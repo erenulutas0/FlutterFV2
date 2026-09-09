@@ -14,7 +14,9 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.eq;
@@ -211,6 +213,186 @@ class GroqSpeechToTextServiceTest {
                 () -> service.transcribe(new byte[]{1}, "speech.m4a", "audio/mp4", "en"));
 
         assertEquals("Groq speech transcription failed", ex.getMessage());
+    }
+
+    /**
+     * The learner's own words go on the wire as a comma-separated hint, and nothing else.
+     *
+     * <p>This is the use the {@code prompt} field's comment has described since the
+     * hallucination bug and nobody had implemented: vocabulary, not instructions. "I am agree
+     * with you" was heard as "I am angry with you" on a real device, and "agree" was in that
+     * learner's deck the whole time.
+     */
+    @Test
+    void transcribeShouldSendTheLearnersOwnWordsAsTheWhisperPrompt() {
+        ReflectionTestUtils.setField(service, "prompt", "");
+        when(restTemplate.postForEntity(eq("https://groq.test/audio/transcriptions"),
+                org.mockito.ArgumentMatchers.any(HttpEntity.class),
+                eq(String.class)))
+                .thenReturn(new ResponseEntity<>("{\"text\":\"I am agree with you.\"}", HttpStatus.OK));
+
+        service.transcribe(new byte[]{1}, "a.wav", "audio/wav", "en_US",
+                java.util.List.of("agree", "married", "teacher"));
+
+        String sentPrompt = (String) capturedBody().getFirst("prompt");
+        assertEquals("agree, married, teacher", sentPrompt);
+        assertTrue(!sentPrompt.matches(".*[.!?].*"),
+                "Prose in this field is prepended as prior transcript text and gets continued");
+    }
+
+    /**
+     * A learner with an empty deck must get byte-for-byte the request that ships today.
+     *
+     * <p>The safe prompt is no prompt: the field's whole history is of a non-empty one
+     * writing the first half of a hallucination.
+     */
+    @Test
+    void transcribeShouldSendNoPromptForALearnerWithNoSavedWords() {
+        ReflectionTestUtils.setField(service, "prompt", "");
+        when(restTemplate.postForEntity(eq("https://groq.test/audio/transcriptions"),
+                org.mockito.ArgumentMatchers.any(HttpEntity.class),
+                eq(String.class)))
+                .thenReturn(new ResponseEntity<>("{\"text\":\"hello\"}", HttpStatus.OK));
+
+        GroqSpeechToTextService.TranscriptionResult result =
+                service.transcribe(new byte[]{1}, "a.wav", "audio/wav", "en_US", java.util.List.of());
+
+        assertEquals("hello", result.text());
+        assertTrue(!capturedBody().containsKey("prompt"), "No words means no prompt part at all");
+    }
+
+    /** The escape hatch: an operator can still pin an exact prompt without a deploy. */
+    @Test
+    void transcribeShouldLetTheConfiguredPromptOverrideTheLearnersVocabulary() {
+        ReflectionTestUtils.setField(service, "prompt", "  KlioAI, Piper, Groq  ");
+        when(restTemplate.postForEntity(eq("https://groq.test/audio/transcriptions"),
+                org.mockito.ArgumentMatchers.any(HttpEntity.class),
+                eq(String.class)))
+                .thenReturn(new ResponseEntity<>("{\"text\":\"hello\"}", HttpStatus.OK));
+
+        service.transcribe(new byte[]{1}, "a.wav", "audio/wav", "en_US",
+                java.util.List.of("agree", "married", "teacher"));
+
+        assertEquals("KlioAI, Piper, Groq", capturedBody().getFirst("prompt"));
+    }
+
+    /** The four-argument call still exists and still sends nothing extra. */
+    @Test
+    void transcribeWithoutAVocabularyArgumentIsUnchanged() {
+        ReflectionTestUtils.setField(service, "prompt", "");
+        when(restTemplate.postForEntity(eq("https://groq.test/audio/transcriptions"),
+                org.mockito.ArgumentMatchers.any(HttpEntity.class),
+                eq(String.class)))
+                .thenReturn(new ResponseEntity<>("{\"text\":\"hello\"}", HttpStatus.OK));
+
+        GroqSpeechToTextService.TranscriptionResult result =
+                service.transcribe(new byte[]{1}, "a.wav", "audio/wav", "en_US");
+
+        assertEquals("hello", result.text());
+        assertFalse(result.lowConfidence());
+        assertNull(result.avgLogprob());
+        assertTrue(!capturedBody().containsKey("prompt"));
+    }
+
+    /**
+     * A shaky transcript now says so, instead of being logged and forgotten.
+     *
+     * <p>avg_logprob was already read here for the silence check and written to the log on
+     * every request. The device never saw it, so a learner who was misheard had no way to
+     * intervene before the wrong sentence reached the tutor.
+     */
+    @Test
+    void transcribeShouldFlagAShakyTranscriptAndReportTheNumberBehindIt() {
+        when(restTemplate.postForEntity(eq("https://groq.test/audio/transcriptions"),
+                org.mockito.ArgumentMatchers.any(HttpEntity.class),
+                eq(String.class)))
+                .thenReturn(new ResponseEntity<>(
+                        "{\"text\":\"I am angry with you.\",\"segments\":["
+                                + "{\"no_speech_prob\":0.01,\"avg_logprob\":-0.2},"
+                                + "{\"no_speech_prob\":0.02,\"avg_logprob\":-0.95}]}",
+                        HttpStatus.OK));
+
+        GroqSpeechToTextService.TranscriptionResult result = service.transcribe(
+                new byte[]{1}, "a.wav", "audio/wav", "en_US");
+
+        assertEquals("I am angry with you.", result.text());
+        assertTrue(result.lowConfidence());
+        assertEquals(-0.95, result.avgLogprob(),
+                "The worst segment, not the mean: one garbled clause is enough to misdirect the tutor");
+    }
+
+    @Test
+    void transcribeShouldNotFlagAConfidentTranscript() {
+        when(restTemplate.postForEntity(eq("https://groq.test/audio/transcriptions"),
+                org.mockito.ArgumentMatchers.any(HttpEntity.class),
+                eq(String.class)))
+                .thenReturn(new ResponseEntity<>(
+                        "{\"text\":\"I agree with you.\",\"segments\":["
+                                + "{\"no_speech_prob\":0.01,\"avg_logprob\":-0.31}]}",
+                        HttpStatus.OK));
+
+        GroqSpeechToTextService.TranscriptionResult result = service.transcribe(
+                new byte[]{1}, "a.wav", "audio/wav", "en_US");
+
+        assertFalse(result.lowConfidence());
+        assertEquals(-0.31, result.avgLogprob());
+    }
+
+    /**
+     * A discarded transcript is nothing, not something shaky.
+     *
+     * <p>Telling the learner to double-check words that are not there would be worse than
+     * saying nothing. The number is still reported, because a discard is exactly the case
+     * somebody ends up reading a log line about.
+     */
+    @Test
+    void transcribeShouldNotFlagATranscriptItAlreadyThrewAway() {
+        when(restTemplate.postForEntity(eq("https://groq.test/audio/transcriptions"),
+                org.mockito.ArgumentMatchers.any(HttpEntity.class),
+                eq(String.class)))
+                .thenReturn(new ResponseEntity<>(
+                        "{\"text\":\"Thank you.\",\"segments\":["
+                                + "{\"no_speech_prob\":0.94,\"avg_logprob\":-1.7}]}",
+                        HttpStatus.OK));
+
+        GroqSpeechToTextService.TranscriptionResult result = service.transcribe(
+                new byte[]{1}, "a.wav", "audio/wav", "en_US");
+
+        assertEquals("", result.text(), "The silence check must still discard this");
+        assertFalse(result.lowConfidence());
+        assertEquals(-1.7, result.avgLogprob());
+    }
+
+    /**
+     * The hint being read back is not a transcript.
+     *
+     * <p>The risk this feature opens: the prompt is prior transcript text, so handed silence
+     * and a word list, the model can carry on writing the list — the same move that turned
+     * the old prose prompt into invented subtitle boilerplate.
+     */
+    @Test
+    void transcribeShouldDiscardTheHintComingStraightBack() {
+        ReflectionTestUtils.setField(service, "prompt", "");
+        when(restTemplate.postForEntity(eq("https://groq.test/audio/transcriptions"),
+                org.mockito.ArgumentMatchers.any(HttpEntity.class),
+                eq(String.class)))
+                .thenReturn(new ResponseEntity<>(
+                        "{\"text\":\"agree, married, teacher, weekend.\"}", HttpStatus.OK));
+
+        GroqSpeechToTextService.TranscriptionResult result = service.transcribe(
+                new byte[]{1}, "a.wav", "audio/wav", "en_US",
+                java.util.List.of("agree", "married", "teacher", "weekend"));
+
+        assertEquals("", result.text());
+    }
+
+    private MultiValueMap<String, Object> capturedBody() {
+        ArgumentCaptor<HttpEntity> entityCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).postForEntity(
+                eq("https://groq.test/audio/transcriptions"),
+                entityCaptor.capture(),
+                eq(String.class));
+        return multipartBody(entityCaptor.getValue());
     }
 
     @SuppressWarnings("unchecked")

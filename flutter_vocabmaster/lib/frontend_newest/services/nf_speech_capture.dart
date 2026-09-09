@@ -49,12 +49,23 @@ class NfCaptureResult {
     this.transcript = '',
     this.error,
     this.pace,
+    this.lowConfidence = false,
   });
 
   final NfCaptureOutcome outcome;
 
   /// Trimmed transcript. Non-empty only for [NfCaptureOutcome.transcribed].
   final String transcript;
+
+  /// Whether [transcript] is the server's best guess rather than something it
+  /// is sure of — see [SpeechTranscription.lowConfidence].
+  ///
+  /// Passed through untouched rather than re-decided here. This class can hear
+  /// whether there was sound in the room; only the transcriber knows whether
+  /// the words it produced were words it recognised, and a second opinion
+  /// computed from peak and range would just be the silence gate answering a
+  /// question it was not asked.
+  final bool lowConfidence;
 
   /// How fast this was spoken, or null when the clip was too short to say.
   /// Null is "nothing to report", never "slow".
@@ -63,6 +74,38 @@ class NfCaptureResult {
   /// The thrown object for [NfCaptureOutcome.failed], so the caller can decide
   /// between a paywall, a quota message and a generic retry.
   final Object? error;
+
+  /// Whether this has to be read by the learner before anything is done with
+  /// it.
+  ///
+  /// The screen's fork, in one place, so it can be pinned without a microphone
+  /// in the room. Both halves matter: a doubtful transcript must not go
+  /// straight to the tutor, and every other result must reach the screen by the
+  /// route it always has — an outcome with no transcript in it has nothing to
+  /// check, whatever the server thought of it.
+  bool get needsChecking =>
+      outcome == NfCaptureOutcome.transcribed && lowConfidence;
+
+  /// A result as `stopAndTranscribe` would have built it.
+  ///
+  /// The private constructor is what stops the rest of the app inventing
+  /// transcripts; a test driving the screen's fork is the one caller that has
+  /// to.
+  @visibleForTesting
+  factory NfCaptureResult.forTest(
+    NfCaptureOutcome outcome, {
+    String transcript = '',
+    bool lowConfidence = false,
+    NfSpokenPace? pace,
+    Object? error,
+  }) =>
+      NfCaptureResult._(
+        outcome,
+        transcript: transcript,
+        lowConfidence: lowConfidence,
+        pace: pace,
+        error: error,
+      );
 }
 
 /// Microphone capture for the new frontend's tutor tab: record while held,
@@ -285,10 +328,20 @@ class NfSpeechCapture extends ChangeNotifier {
       if (trimmed.isEmpty) {
         return const NfCaptureResult._(NfCaptureOutcome.silent);
       }
+      if (result.lowConfidence) {
+        // Logged with the score the server used, because the threshold behind
+        // it will be retuned and the only honest input for that is what real
+        // clips scored. The number never reaches the screen.
+        debugPrint('NfSpeechCapture low confidence: '
+            'avgLogprob=${result.avgLogprob?.toStringAsFixed(2) ?? 'n/a'} '
+            'peak=${peakDb.toStringAsFixed(1)} '
+            'range=${rangeDb.toStringAsFixed(1)} dB');
+      }
       return NfCaptureResult._(
         NfCaptureOutcome.transcribed,
         transcript: trimmed,
         pace: NfSpokenPace.from(result.words),
+        lowConfidence: result.lowConfidence,
       );
     } catch (e) {
       return NfCaptureResult._(NfCaptureOutcome.failed, error: e);

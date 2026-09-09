@@ -7,7 +7,12 @@ import 'groq_api_client.dart';
 /// - Core AI flows (chat/translation/sentence generation/speaking) go through backend to enforce quotas.
 /// - Some legacy generators still call Groq directly (BYOK) until backend endpoints are added.
 class ChatbotService {
-  final ApiService _api = ApiService();
+  /// [api] is injectable so a test can serve a canned transcription response.
+  /// Everything in production passes nothing and gets the shared client, which
+  /// is what every existing caller already does.
+  ChatbotService({ApiService? api}) : _api = api ?? ApiService();
+
+  final ApiService _api;
 
   /// Drops the server-side thread. See [ApiService.chatbotResetConversation].
   Future<void> resetConversation() => _api.chatbotResetConversation();
@@ -140,6 +145,7 @@ class ChatbotService {
       );
       final measured = result['measuredDurationMs'];
       final Object? rawWords = result['words'];
+      final Object? rawLogprob = result['avgLogprob'];
       return SpeechTranscription(
         text: (result['text'] ?? '').toString().trim(),
         measuredDurationMs:
@@ -150,6 +156,15 @@ class ChatbotService {
                 .whereType<NfWordTiming>()
                 .toList()
             : const <NfWordTiming>[],
+        // `== true` and nothing looser. Every server older than this field
+        // sends no key at all, and those installs must go on behaving exactly
+        // as they do today, so absent has to read as confident. A tolerant
+        // read would be worse in the one direction that matters: anything
+        // truthy-ish arriving by accident would put a confirmation step in
+        // front of every single turn, which is the common path and the one
+        // thing this feature is not allowed to slow down.
+        lowConfidence: result['lowConfidence'] == true,
+        avgLogprob: rawLogprob is num ? rawLogprob.toDouble() : null,
       );
     } catch (e) {
       debugPrint('ChatbotService.transcribeSpeech error: $e');
@@ -1041,9 +1056,33 @@ class SpeechTranscription {
   /// Empty when the server sent none, which older builds and short clips do.
   final List<NfWordTiming> words;
 
+  /// The server's judgement that this transcript is worth double-checking
+  /// before anything is done with it.
+  ///
+  /// Whisper does not hedge: it returns a fluent, confident sentence whether or
+  /// not it heard one, so "I am agree with you" comes back as "I am angry with
+  /// you" with nothing on it to say the words were a guess. That transcript
+  /// then went straight to the tutor, which corrected a sentence the learner
+  /// never said — the app's whole selling point telling them, to their face,
+  /// that they had said something they had not.
+  ///
+  /// False for every server that does not send the field, so an older backend
+  /// keeps the behaviour it has always had rather than gaining a confirmation
+  /// step nothing on that server can ever clear.
+  final bool lowConfidence;
+
+  /// Whisper's mean token log probability, for the debug log only.
+  ///
+  /// Deliberately never drawn: "-0.82" means nothing to a learner, and putting
+  /// a number beside their own sentence invites them to read it as a score of
+  /// their pronunciation, which it is not. Null when the server sent none.
+  final double? avgLogprob;
+
   const SpeechTranscription({
     required this.text,
     this.measuredDurationMs,
     this.words = const <NfWordTiming>[],
+    this.lowConfidence = false,
+    this.avgLogprob,
   });
 }

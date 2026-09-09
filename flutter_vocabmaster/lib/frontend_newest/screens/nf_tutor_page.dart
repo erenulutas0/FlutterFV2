@@ -12,6 +12,8 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../models/tutor_correction.dart';
+import '../../models/word.dart';
+import '../../models/word_origins.dart';
 import '../../models/xp_sources.dart';
 import '../../models/voice_model.dart';
 import '../../providers/app_state_provider.dart';
@@ -32,6 +34,7 @@ import '../theme/nf_theme_scope.dart';
 import '../theme/nf_tokens.dart';
 import '../widgets/nf_card.dart';
 import '../widgets/nf_chip.dart';
+import '../widgets/nf_word_lookup.dart';
 
 /// The tutor tab: a spoken conversation with the AI partner, promoted from a
 /// screen buried behind the AI menu to a top-level destination.
@@ -43,7 +46,11 @@ import '../widgets/nf_chip.dart';
 /// (via [NfSpeechCapture]) for the transcript, and [PiperTtsService] with the
 /// device TTS as fallback for the voice.
 class NfTutorPage extends StatefulWidget {
-  const NfTutorPage({super.key});
+  const NfTutorPage({super.key, this.apiService});
+
+  /// Injectable for tests, the same way the reader page takes one. Defaults to
+  /// the shared [ApiService].
+  final ApiService? apiService;
 
   @override
   State<NfTutorPage> createState() => _NfTutorPageState();
@@ -64,6 +71,10 @@ class _NfTutorPageState extends State<NfTutorPage> {
   final FlutterTts _deviceTts = FlutterTts();
   final ScrollController _scrollController = ScrollController();
   final List<_NfTurn> _turns = <_NfTurn>[];
+
+  /// Used by the tapped-word sheet and by keeping a correction. The tutor's own
+  /// replies go through [ChatbotService]; this is the words half of the screen.
+  late final ApiService _api;
 
   /// The scene being played, or null for ordinary conversation.
   NfScene? _scene;
@@ -93,6 +104,23 @@ class _NfTutorPageState extends State<NfTutorPage> {
   String? _hint;
   Timer? _hintTimer;
 
+  /// A transcript the server was not sure of, held in front of the learner
+  /// instead of being sent. Non-null for exactly as long as the footer is
+  /// asking them to confirm it; null is the ordinary, confident path.
+  ///
+  /// The controller is the state: it holds what will be sent, and it is what
+  /// the learner edits. There is no separate copy of the original text,
+  /// because there is nothing this screen would ever do with it — a transcript
+  /// the learner has corrected is simply what they said.
+  TextEditingController? _confirming;
+
+  /// The pace measured from the clip that produced [_confirming].
+  ///
+  /// Kept across an edit. It is a fact about how fast they spoke, and fixing
+  /// "angry" to "agree" does not change that; recomputing or dropping it would
+  /// lose a real measurement to a spelling correction.
+  NfSpokenPace? _confirmingPace;
+
   String _sessionXpId = 'nf_tutor_${DateTime.now().millisecondsSinceEpoch}';
   bool _sessionXpAwarded = false;
 
@@ -117,6 +145,7 @@ class _NfTutorPageState extends State<NfTutorPage> {
   @override
   void initState() {
     super.initState();
+    _api = widget.apiService ?? ApiService();
     _capture = NfSpeechCapture(
       chatbot: _chatbot,
       onMaxDurationReached: _handleHoldEnd,
@@ -128,6 +157,7 @@ class _NfTutorPageState extends State<NfTutorPage> {
   @override
   void dispose() {
     _hintTimer?.cancel();
+    _confirming?.dispose();
     _capture.removeListener(_onCaptureChanged);
     _capture.dispose();
     unawaited(_player.dispose());
@@ -200,6 +230,10 @@ class _NfTutorPageState extends State<NfTutorPage> {
   /// different face reads as one person having changed voice halfway through,
   /// and under the wrong scene it reads as a barista answering the doctor.
   void _adopt(NfTutorSession saved) {
+    // A sentence waiting to be checked belongs to the conversation it was
+    // spoken into. Carrying it across would drop it, minutes later, into a
+    // thread nobody said it in.
+    _clearConfirming();
     _threadId = saved.id;
     _threadStartedAt = saved.startedAt;
     _scene = NfScene.all
@@ -229,6 +263,9 @@ class _NfTutorPageState extends State<NfTutorPage> {
   /// character who never read them. They are saved rather than dropped now,
   /// and reachable from the history sheet.
   void _beginThread() {
+    // Same reason as in [_adopt]: changing speaker or scene ends the
+    // conversation the pending sentence was spoken into.
+    _clearConfirming();
     _threadId = DateTime.now().microsecondsSinceEpoch.toString();
     _threadStartedAt = DateTime.now();
     _pendingRecall = NfTutorRecall.build(
@@ -369,7 +406,15 @@ class _NfTutorPageState extends State<NfTutorPage> {
 
     switch (result.outcome) {
       case NfCaptureOutcome.transcribed:
-        await _send(result.transcript, pace: result.pace);
+        // The one fork on this path, and it stays a fork rather than a step
+        // everybody takes. A confident transcript goes where it has always
+        // gone, at the speed it has always gone there: the common case must
+        // not pay for the uncommon one.
+        if (result.needsChecking) {
+          _askBeforeSending(result);
+        } else {
+          await _send(result.transcript, pace: result.pace);
+        }
       case NfCaptureOutcome.silent:
         _showHint(context.tr('tutor.hint.noSpeech'));
       case NfCaptureOutcome.tooShort:
@@ -379,6 +424,79 @@ class _NfTutorPageState extends State<NfTutorPage> {
       case NfCaptureOutcome.failed:
         await _reportCaptureFailure(result.error);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Checking a transcript the server was not sure of
+  // ---------------------------------------------------------------------------
+
+  /// Hold the transcript in the footer instead of sending it.
+  ///
+  /// "I am agree with you" came back as "I am angry with you" and went straight
+  /// to the tutor, which then corrected a sentence the learner had never said —
+  /// the one feature that justifies this screen, lying to them in their own
+  /// conversation. There is no way to tell from the text that it was a guess,
+  /// so the only person who can settle it is the person who spoke.
+  ///
+  /// This is a state of the footer, not a dialog over it. The footer is already
+  /// the place that says what is happening — holding, transcribing, thinking —
+  /// and a modal would cover the conversation the sentence belongs to and
+  /// interrupt a screen whose whole rhythm is press, speak, release.
+  void _askBeforeSending(NfCaptureResult result) {
+    _confirmingPace = result.pace;
+    setState(() {
+      _confirming = TextEditingController(text: result.transcript);
+    });
+  }
+
+  /// Send what is in the field, edited or not.
+  ///
+  /// Deliberately reachable in one tap. Somebody who was heard correctly and
+  /// merely tripped the threshold has done nothing wrong, and making them
+  /// re-read and re-approve their own sentence every time would turn a safety
+  /// net into a toll.
+  Future<void> _acceptTranscript() async {
+    final TextEditingController? confirming = _confirming;
+    if (confirming == null) {
+      return;
+    }
+    final String text = confirming.text.trim();
+    final NfSpokenPace? pace = _confirmingPace;
+    setState(_clearConfirming);
+
+    if (text.isEmpty) {
+      // Emptying the field and sending is a way of saying "forget it", and the
+      // tutor has nothing to answer. Same hint as a clip with no speech in it,
+      // because from here it is the same event.
+      _showHint(context.tr('tutor.hint.noSpeech'));
+      return;
+    }
+    await _send(text, pace: pace);
+  }
+
+  /// Abandon the turn. Nothing is sent, nothing is charged, nothing is drawn.
+  ///
+  /// The way out matters as much as the way through: a learner who was heard
+  /// so badly that the sentence is not worth repairing needs to be able to say
+  /// so, and without this the only exits are sending nonsense to the tutor or
+  /// leaving the tab.
+  void _discardTranscript() {
+    setState(_clearConfirming);
+  }
+
+  /// Drops the pending transcript. The caller owns the rebuild, because two of
+  /// the three callers are already inside a setState of their own.
+  void _clearConfirming() {
+    final TextEditingController? confirming = _confirming;
+    if (confirming == null) {
+      return;
+    }
+    _confirming = null;
+    _confirmingPace = null;
+    // Disposed after the frame that takes the field out of the tree, not now.
+    // A TextField still mounted this frame would be holding a dead controller
+    // and throws on its next paint.
+    WidgetsBinding.instance.addPostFrameCallback((_) => confirming.dispose());
   }
 
   /// A dialog, not the three-second hint the other capture failures get.
@@ -628,6 +746,49 @@ class _NfTutorPageState extends State<NfTutorPage> {
     _sessionXpId = 'nf_tutor_${DateTime.now().millisecondsSinceEpoch}';
     _sessionXpAwarded = false;
   }
+
+  // ---------------------------------------------------------------------------
+  // Words kept out of the conversation
+  // ---------------------------------------------------------------------------
+
+  /// Look a tapped word up, in the sentence it was said in.
+  ///
+  /// The first real feedback this app ever had asked for this in as many words,
+  /// and the book reader already had all of it: the same sheet, the same
+  /// dictionary call in the same sentence context, the same quota and paywall
+  /// handling, the same push into the deck so the Words screen believes it. The
+  /// one thing that differs is where the word came from.
+  Future<void> _onWordTapped(String rawToken, String sentence) async {
+    // The sheet is about to cover the bubble that is speaking. Leaving the
+    // voice running under it means reading a definition over the top of it.
+    _stopAudio();
+    await showNfWordLookup(
+      context,
+      rawToken: rawToken,
+      sentence: sentence,
+      api: _api,
+      origin: WordOrigins.tutor,
+    );
+  }
+
+  /// A phrase reduced to what makes two copies of it the same phrase.
+  ///
+  /// Case and punctuation removed, because what the deck holds is what the
+  /// model wrote and the model does not reproduce its own full stops. A literal
+  /// comparison would offer to keep "I'm bored" a second time on the strength
+  /// of a comma, and the deck would fill with the same correction over and over
+  /// — which costs the learner a review every day for a word they know.
+  static String _deckKey(String text) => text
+      .toLowerCase()
+      .split(_notPartOfAPhrase)
+      .where((String part) => part.isNotEmpty)
+      .join(' ');
+
+  /// Whitespace and the punctuation a sentence ends or breaks on. Deliberately
+  /// not "everything that is not a-z": the learning language is not always
+  /// English here, and folding away every accented letter would make two
+  /// different phrases look like one.
+  static final RegExp _notPartOfAPhrase = RegExp(r'''[\s.,!?;:'"“”‘’()\[\]-]+''');
 
   /// Switch scenes, which starts the conversation over.
   ///
@@ -1097,6 +1258,18 @@ class _NfTutorPageState extends State<NfTutorPage> {
       );
     }
 
+    // Read once per frame rather than per turn. A conversation is a few dozen
+    // bubbles and a deck can be a few hundred entries, and asking the list a
+    // question per word per bubble is the kind of quiet quadratic that only
+    // shows up on the phone of the learner who has been using the app longest.
+    final List<Word> deck = context.watch<AppStateProvider>().allWords;
+    final Set<String> savedWords = deck
+        .map((Word w) => w.englishWord.trim().toLowerCase())
+        .where((String w) => w.isNotEmpty)
+        .toSet();
+    final Set<String> keptPhrases =
+        deck.map((Word w) => _deckKey(w.englishWord)).toSet();
+
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.all(NfSpace.s16),
@@ -1110,12 +1283,21 @@ class _NfTutorPageState extends State<NfTutorPage> {
         }
 
         final _NfTurn turn = _turns[index];
+        final TutorCorrection? fix = turn.correction;
         return Padding(
           padding: EdgeInsets.only(top: index == 0 ? 0 : NfSpace.s14),
           child: _TurnView(
             turn: turn,
             speaking: _speakingTurnId == turn.id,
             onPlay: () => unawaited(_speak(turn)),
+            savedWords: savedWords,
+            onWordTapped: (String token, String sentence) =>
+                unawaited(_onWordTapped(token, sentence)),
+            api: _api,
+            correctionKept:
+                fix != null && keptPhrases.contains(_deckKey(fix.better)),
+            onCorrectionSaved: (Word saved) =>
+                context.read<AppStateProvider>().adoptServerWord(saved),
           ),
         );
       },
@@ -1123,8 +1305,11 @@ class _NfTutorPageState extends State<NfTutorPage> {
   }
 
   Widget _buildFooter(NfTokens t) {
-    final bool enabled =
-        !_bootstrapping && !_isReplying && !_capture.isTranscribing;
+    final TextEditingController? confirming = _confirming;
+    final bool enabled = !_bootstrapping &&
+        !_isReplying &&
+        !_capture.isTranscribing &&
+        confirming == null;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(
@@ -1144,13 +1329,23 @@ class _NfTutorPageState extends State<NfTutorPage> {
             height: _statusStripHeight,
             child: Center(child: _buildStatusStrip(t)),
           ),
-          _HoldToSpeakButton(
-            enabled: enabled,
-            recording: _capture.isRecording,
-            transcribing: _capture.isTranscribing,
-            onHoldStart: _handleHoldStart,
-            onHoldEnd: _handleHoldEnd,
-          ),
+          // The button and the check take the same slot rather than stacking,
+          // so the conversation above never gives up height for a state it is
+          // not in — and so there is exactly one thing to do at a time.
+          if (confirming != null)
+            _ConfirmTranscript(
+              controller: confirming,
+              onSend: () => unawaited(_acceptTranscript()),
+              onDiscard: _discardTranscript,
+            )
+          else
+            _HoldToSpeakButton(
+              enabled: enabled,
+              recording: _capture.isRecording,
+              transcribing: _capture.isTranscribing,
+              onHoldStart: _handleHoldStart,
+              onHoldEnd: _handleHoldEnd,
+            ),
           const SizedBox(height: NfSpace.s10),
           Text(
             _captionText(context),
@@ -1164,6 +1359,21 @@ class _NfTutorPageState extends State<NfTutorPage> {
   }
 
   Widget _buildStatusStrip(NfTokens t) {
+    // Ahead of the meter and the hints: while a sentence is waiting to be
+    // checked it is the only thing happening, and this line is the only place
+    // that says why the send button is where the microphone was. It carries no
+    // timer for the same reason — a three-second hint that vanishes leaves an
+    // unexplained text field.
+    if (_confirming != null) {
+      return Text(
+        context.tr('tutor.confirm.hint'),
+        style: NfTokens.body(size: NfFont.s125, color: t.streakText),
+        textAlign: TextAlign.center,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
     if (_capture.isRecording) {
       return ValueListenableBuilder<List<double>>(
         valueListenable: _capture.levels,
@@ -1194,6 +1404,9 @@ class _NfTutorPageState extends State<NfTutorPage> {
   }
 
   String _captionText(BuildContext context) {
+    if (_confirming != null) {
+      return context.tr('tutor.confirm.caption');
+    }
     if (_capture.isTranscribing) {
       return context.tr('tutor.caption.transcribing');
     }
@@ -1262,21 +1475,31 @@ class _NfTurn {
   /// the shape of a reward reads as "well done" for the thing you got wrong.
   final TutorCorrection? correction;
 
+  /// The same turn with a correction attached.
+  ///
+  /// Every field is carried over by hand, and [pace] was the one that was not:
+  /// the words-per-minute line disappeared from precisely the turns that got
+  /// corrected, which are the turns a learner looks back at. It read as the pace
+  /// feature being unreliable rather than as a copy quietly dropping a field.
   _NfTurn withCorrection(TutorCorrection value) => _NfTurn(
         id: id,
         text: text,
         fromTutor: fromTutor,
         hasAudio: hasAudio,
         note: note,
+        pace: pace,
         correction: value,
       );
 
+  /// The same turn with an XP note attached. Loses nothing else — see
+  /// [withCorrection] for what "nothing else" cost when it was not true.
   _NfTurn withNote(String value) => _NfTurn(
         id: id,
         text: text,
         fromTutor: fromTutor,
         hasAudio: hasAudio,
         note: value,
+        pace: pace,
         correction: correction,
       );
 }
@@ -1290,17 +1513,53 @@ class _TurnView extends StatelessWidget {
     required this.turn,
     required this.speaking,
     required this.onPlay,
+    required this.api,
+    this.savedWords = const <String>{},
+    this.onWordTapped,
+    this.correctionKept = false,
+    this.onCorrectionSaved,
   });
 
   final _NfTurn turn;
   final bool speaking;
   final VoidCallback onPlay;
 
+  final ApiService api;
+
+  /// The learner's deck, lowercased, so their own words are marked where they
+  /// turn up in the conversation.
+  final Set<String> savedWords;
+
+  /// Called with the tapped token and the line it was tapped in.
+  final void Function(String token, String sentence)? onWordTapped;
+
+  /// Whether this turn's correction is already in the deck.
+  final bool correctionKept;
+
+  final void Function(Word word)? onCorrectionSaved;
+
+  /// Whether the words in this bubble are worth looking up.
+  ///
+  /// Everything the tutor actually said and everything the learner said is;
+  /// an app notice is not. Those are the connection and quota messages, written
+  /// by this app in the interface language, and putting a Turkish word from one
+  /// of them into an English dictionary returns confident nonsense. [hasAudio]
+  /// already separates the two — it is false for exactly the lines nobody
+  /// spoke.
+  bool get _lookUpable => !turn.fromTutor || turn.hasAudio;
+
   @override
   Widget build(BuildContext context) {
     final NfTokens t = NfTokens.of(context);
     final bool fromTutor = turn.fromTutor;
     final double maxWidth = MediaQuery.sizeOf(context).width * 0.78;
+
+    final TextStyle bubbleText = NfTokens.body(
+      size: NfFont.s145,
+      color: fromTutor ? t.ink : t.primaryInk,
+      height: 1.4,
+    );
+    final void Function(String token, String sentence)? tap = onWordTapped;
 
     final Widget bubble = ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth),
@@ -1310,14 +1569,21 @@ class _TurnView extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            Text(
-              turn.text,
-              style: NfTokens.body(
-                size: NfFont.s145,
-                color: fromTutor ? t.ink : t.primaryInk,
-                height: 1.4,
-              ),
-            ),
+            // Both sides of the conversation, not just the tutor's. A learner
+            // is at least as likely to want the word they reached for and were
+            // not sure of as one they were just told.
+            if (tap != null && _lookUpable)
+              NfTappableText(
+                text: turn.text,
+                style: bubbleText,
+                saved: savedWords,
+                // On the learner's filled bubble the reader's primary underline
+                // would be invisible against the primary fill.
+                savedColor: fromTutor ? t.primary : t.primaryInk,
+                onWordTapped: (String token) => tap(token, turn.text),
+              )
+            else
+              Text(turn.text, style: bubbleText),
             if (turn.hasAudio) ...<Widget>[
               const SizedBox(height: NfSpace.s10),
               _AudioRow(
@@ -1336,11 +1602,16 @@ class _TurnView extends StatelessWidget {
           fromTutor ? CrossAxisAlignment.start : CrossAxisAlignment.end,
       children: <Widget>[
         bubble,
-        if (turn.correction != null) ...<Widget>[
+        if (turn.correction case final TutorCorrection fix) ...<Widget>[
           const SizedBox(height: NfSpace.s8),
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: maxWidth),
-            child: _CorrectionNote(correction: turn.correction!),
+            child: _CorrectionNote(
+              correction: fix,
+              api: api,
+              alreadySaved: correctionKept,
+              onSaved: onCorrectionSaved,
+            ),
           ),
         ],
         if (turn.note != null) ...<Widget>[
@@ -1657,14 +1928,102 @@ class _WaveformPainter extends CustomPainter {
 /// conversation is the whole job. Red would turn a spoken sentence into a
 /// failed question, and the fastest way to stop someone speaking is to score
 /// them while they do it.
-class _CorrectionNote extends StatelessWidget {
-  const _CorrectionNote({required this.correction});
+class _CorrectionNote extends StatefulWidget {
+  const _CorrectionNote({
+    required this.correction,
+    required this.api,
+    this.alreadySaved = false,
+    this.onSaved,
+  });
 
   final TutorCorrection correction;
+
+  final ApiService api;
+
+  /// Whether this corrected phrase is in the deck already, worked out by the
+  /// page against the words it is watching. A card that offered to keep the
+  /// same phrase every time it was scrolled past would fill the deck with
+  /// copies of one sentence and charge the learner a review for each of them.
+  final bool alreadySaved;
+
+  /// Called with the word the server made, so the Words screen learns about it
+  /// without waiting for a restart.
+  final void Function(Word word)? onSaved;
+
+  @override
+  State<_CorrectionNote> createState() => _CorrectionNoteState();
+}
+
+class _CorrectionNoteState extends State<_CorrectionNote> {
+  bool _saving = false;
+  bool _saved = false;
+  String? _error;
+
+  /// What the deck should say this phrase means.
+  ///
+  /// The note, when there is one: it is already the explanation, already in the
+  /// learner's own language, and it is the only sentence anywhere that says why
+  /// the correction was needed. When the model sent none, their own version is
+  /// the next most useful thing — named as the mistake it was, so a deck entry
+  /// reading "Instead of: I am boring" teaches on sight. What it must never be
+  /// is the wrong sentence on its own: a review card that asks a learner to
+  /// produce their own error would teach the error.
+  String _meaning(BuildContext context) {
+    final String? why = widget.correction.note;
+    if (why != null && why.trim().isNotEmpty) {
+      return why;
+    }
+    return context
+        .tr('tutor.correction.insteadOf')
+        .replaceAll('{said}', widget.correction.said);
+  }
+
+  Future<void> _save() async {
+    if (_saving || _saved || widget.alreadySaved) {
+      return;
+    }
+    // Read before the first await. Reaching for a localisation across an async
+    // gap is how a screen ends up asking a disposed context for a string.
+    final String meaning = _meaning(context);
+
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final Word word = await widget.api.createWord(
+        english: widget.correction.better,
+        turkish: meaning,
+        addedDate: DateTime.now(),
+        origin: WordOrigins.tutor,
+      );
+      // No example sentence attached, unlike a word kept from a book. There the
+      // sentence is the context that makes a single word learnable; here the
+      // phrase IS the sentence, and adding it to itself would show the learner
+      // the same line twice in review and call one of them an example.
+      widget.onSaved?.call(word);
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _saved = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        // Named, not stringified, and left where the learner can try again.
+        // The alternative this replaces everywhere else in the app is
+        // `e.toString()`, which puts "Exception: Kelime kaydetme başarısız:
+        // 500" in front of a learner reading French.
+        _error = AiErrorMessageFormatter.forError(e);
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final NfTokens t = NfTokens.of(context);
+    final TutorCorrection correction = widget.correction;
 
     return NfCard(
       backgroundColor: t.streakSoft,
@@ -1725,8 +2084,97 @@ class _CorrectionNote extends StatelessWidget {
               ),
             ),
           ],
+          _buildKeep(t),
         ],
       ),
+    );
+  }
+
+  /// One tap that keeps the corrected phrase.
+  ///
+  /// Without it the card teaches and then throws the lesson away: a learner is
+  /// shown the right way to say something, reads it once, and makes the same
+  /// mistake two days later with nothing anywhere to review. The deck is the
+  /// part of this app that remembers, and until now the one screen that
+  /// produced something worth remembering had no way into it.
+  ///
+  /// Quiet, and inside the card rather than under it. This is an option on a
+  /// correction, not the point of one — the corrected sentence is still the
+  /// thing to read, and a full-width button beneath it would make keeping the
+  /// phrase look like the task.
+  Widget _buildKeep(NfTokens t) {
+    final bool done = _saved || widget.alreadySaved;
+    final String label = _saved
+        ? context.tr('tutor.correction.kept')
+        : widget.alreadySaved
+            ? context.tr('tutor.correction.already')
+            : context.tr('tutor.correction.keep');
+
+    final Widget mark = _saving
+        ? SizedBox(
+            width: NfSpace.s16,
+            height: NfSpace.s16,
+            child: CircularProgressIndicator(
+              strokeWidth: NfStroke.iconLight,
+              valueColor: AlwaysStoppedAnimation<Color>(t.streakText),
+            ),
+          )
+        : Icon(
+            done
+                ? Icons.bookmark_added_rounded
+                : Icons.bookmark_add_outlined,
+            size: NfFont.s16,
+            color: done ? t.correct : t.streakText,
+          );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Semantics(
+          button: true,
+          enabled: !done && !_saving,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: done || _saving ? null : () => unawaited(_save()),
+            child: Container(
+              // A row of small text is a tap target well under the 44 a thumb
+              // needs, and this one sits directly above the next bubble: too
+              // small and the miss lands on the conversation.
+              constraints: const BoxConstraints(minHeight: NfSize.minTap),
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  mark,
+                  const SizedBox(width: NfSpace.s6),
+                  Flexible(
+                    child: Text(
+                      label,
+                      style: NfTokens.body(
+                        size: NfFont.s125,
+                        weight: NfTokens.bodyEmphasisWeight,
+                        color: done ? t.correct : t.streakText,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        // Said out loud rather than swallowed, and the row above stays live so
+        // the next tap retries. A save that failed silently is the worst of the
+        // three outcomes: the learner believes the phrase is in their deck and
+        // finds out days later that it never was.
+        if (_error case final String message) ...<Widget>[
+          Text(
+            message,
+            style: NfTokens.body(size: NfFont.s12, color: t.wrong),
+          ),
+          const SizedBox(height: NfSpace.s4),
+        ],
+      ],
     );
   }
 }
@@ -1737,8 +2185,60 @@ class _CorrectionNote extends StatelessWidget {
 /// network and a text-to-speech engine to reach, so the alternative to this is
 /// not testing the one card in the tutor tab a learner is meant to read.
 @visibleForTesting
-Widget nfCorrectionCardForTest(TutorCorrection correction) =>
-    _CorrectionNote(correction: correction);
+Widget nfCorrectionCardForTest(
+  TutorCorrection correction, {
+  ApiService? api,
+  bool alreadySaved = false,
+  void Function(Word word)? onSaved,
+}) =>
+    _CorrectionNote(
+      correction: correction,
+      api: api ?? ApiService(),
+      alreadySaved: alreadySaved,
+      onSaved: onSaved,
+    );
+
+/// One turn as the conversation draws it, for widget tests.
+///
+/// Same reason as the card above: the words in a bubble became tappable and
+/// nothing could reach a bubble without a microphone and a network behind it.
+@visibleForTesting
+Widget nfTurnForTest({
+  required String text,
+  required bool fromTutor,
+  bool hasAudio = false,
+  void Function(String token, String sentence)? onWordTapped,
+  VoidCallback? onPlay,
+  Set<String> savedWords = const <String>{},
+  ApiService? api,
+}) =>
+    _TurnView(
+      turn: _NfTurn(id: 0, text: text, fromTutor: fromTutor, hasAudio: hasAudio),
+      speaking: false,
+      onPlay: onPlay ?? () {},
+      api: api ?? ApiService(),
+      savedWords: savedWords,
+      onWordTapped: onWordTapped,
+    );
+
+/// The footer as it looks while a doubtful transcript waits to be checked.
+///
+/// Reaching the real one needs a microphone, a permission grant and a server
+/// that decided to doubt something, none of which exist in a test. What can be
+/// pinned here is the whole contract a learner meets: the sentence is readable
+/// and editable, one tap accepts it, an edit survives that tap, and there is a
+/// way out that sends nothing.
+@visibleForTesting
+Widget nfConfirmTranscriptForTest({
+  required TextEditingController controller,
+  required VoidCallback onSend,
+  required VoidCallback onDiscard,
+}) =>
+    _ConfirmTranscript(
+      controller: controller,
+      onSend: onSend,
+      onDiscard: onDiscard,
+    );
 
 class _FeedbackNote extends StatelessWidget {
   const _FeedbackNote({required this.text});
@@ -1912,6 +2412,119 @@ class _SpeakerAvatar extends StatelessWidget {
 
 /// The 74px circle that runs the conversation. Push-to-talk: recording starts
 /// on touch and the clip is sent on release.
+/// The footer while a transcript the server doubted waits to be checked.
+///
+/// Three things, in the order a learner needs them: a way out, the sentence
+/// itself, and one tap to send it. It takes the microphone's slot rather than
+/// appearing above it, so the conversation loses no height and there is exactly
+/// one thing to do.
+class _ConfirmTranscript extends StatelessWidget {
+  const _ConfirmTranscript({
+    required this.controller,
+    required this.onSend,
+    required this.onDiscard,
+  });
+
+  /// The drawn circle inside the 44dp target, the same way the play control on
+  /// a bubble draws 32 inside one. Not a spec token — the design has no metric
+  /// for a send button — so it lives next to the only thing that uses it.
+  static const double _sendDiameter = 36;
+
+  final TextEditingController controller;
+  final VoidCallback onSend;
+  final VoidCallback onDiscard;
+
+  @override
+  Widget build(BuildContext context) {
+    final NfTokens t = NfTokens.of(context);
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: <Widget>[
+        IconButton(
+          onPressed: onDiscard,
+          iconSize: NfFont.s22,
+          color: t.inkMuted,
+          icon: const Icon(Icons.close_rounded),
+          tooltip: context.tr('tutor.confirm.discard'),
+        ),
+        Expanded(
+          child: TextField(
+            controller: controller,
+            // Never focused on arrival, and this is the whole reason accepting
+            // costs one tap. Opening the keyboard would cover the conversation
+            // and make the learner who was heard perfectly well dismiss it
+            // before they could agree — a correction step that punishes the
+            // common case is one people learn to dread.
+            autofocus: false,
+            minLines: 1,
+            // Grows to three lines and scrolls past that. A minute of speech is
+            // a paragraph, and a single line would hide most of the sentence
+            // the learner is being asked to check.
+            maxLines: 3,
+            textInputAction: TextInputAction.send,
+            onSubmitted: (_) => onSend(),
+            style: NfTokens.body(size: NfFont.s145, color: t.ink),
+            decoration: InputDecoration(
+              hintText: context.tr('tutor.confirm.field'),
+              hintStyle: NfTokens.body(size: NfFont.s145, color: t.inkFaint),
+              filled: true,
+              fillColor: t.raised,
+              border: OutlineInputBorder(
+                borderRadius: NfRadius.controlAll,
+                borderSide: t.side,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: NfRadius.controlAll,
+                borderSide: t.side,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: NfRadius.controlAll,
+                borderSide: t.sideOf(t.primary),
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: NfSpace.s14,
+                vertical: NfSpace.s12,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: NfSpace.s8),
+        Semantics(
+          button: true,
+          label: context.tr('tutor.confirm.send'),
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onSend,
+              child: SizedBox(
+                width: NfSize.minTap,
+                height: NfSize.minTap,
+                child: Center(
+                  child: Container(
+                    width: _sendDiameter,
+                    height: _sendDiameter,
+                    decoration: BoxDecoration(
+                      color: t.primary,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.arrow_upward_rounded,
+                      size: NfFont.s18,
+                      color: t.primaryInk,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _HoldToSpeakButton extends StatefulWidget {
   const _HoldToSpeakButton({
     required this.enabled,

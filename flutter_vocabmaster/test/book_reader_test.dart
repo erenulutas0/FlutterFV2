@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vocabmaster/frontend_newest/screens/nf_books_page.dart';
 import 'package:vocabmaster/frontend_newest/screens/nf_reader_page.dart';
+import 'package:vocabmaster/frontend_newest/widgets/nf_word_lookup.dart';
 import 'package:provider/provider.dart';
 import 'package:vocabmaster/models/book.dart';
 import 'package:vocabmaster/providers/app_state_provider.dart';
@@ -225,7 +226,7 @@ void main() {
       );
 
       await tester.pumpWidget(host(Scaffold(
-        body: ReaderWordSheet(
+        body: NfWordSheet(
           word: 'underneath',
           sentence: 'They lived underneath a fir-tree.',
           sentenceTranslation: null,
@@ -280,7 +281,7 @@ void main() {
       );
 
       await tester.pumpWidget(host(Scaffold(
-        body: ReaderWordSheet(
+        body: NfWordSheet(
           word: 'underneath',
           sentence: 'They lived underneath a fir-tree.',
           sentenceTranslation: null,
@@ -327,7 +328,7 @@ void main() {
       );
 
       await tester.pumpWidget(host(Scaffold(
-        body: ReaderWordSheet(
+        body: NfWordSheet(
           word: 'underneath',
           sentence: 'They lived underneath a fir-tree.',
           sentenceTranslation: 'Bir köknar ağacının altında yaşıyorlardı.',
@@ -516,7 +517,7 @@ void main() {
       );
 
       await tester.pumpWidget(host(Scaffold(
-        body: ReaderWordSheet(
+        body: NfWordSheet(
           word: 'underneath',
           sentence: 'They lived underneath a fir-tree.',
           sentenceTranslation: null,
@@ -548,7 +549,7 @@ void main() {
       // learner the app is broken when it is doing exactly what it was told,
       // and gives them nothing to act on.
       await tester.pumpWidget(host(Scaffold(
-        body: ReaderWordSheet(
+        body: NfWordSheet(
           word: 'underneath',
           sentence: 'They lived underneath a fir-tree.',
           sentenceTranslation: null,

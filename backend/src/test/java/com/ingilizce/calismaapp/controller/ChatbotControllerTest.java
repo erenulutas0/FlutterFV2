@@ -22,6 +22,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.search.MeterNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,6 +34,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.Duration;
 import java.util.List;
@@ -337,7 +339,8 @@ public class ChatbotControllerTest {
 
     @Test
     void speechTranscribeReturnsTextAndConsumesEstimatedAudioTokens() throws Exception {
-        when(speechToTextService.transcribe(any(byte[].class), eq("speech.m4a"), eq("audio/mp4"), eq("en_US")))
+        when(speechToTextService.transcribe(any(byte[].class), eq("speech.m4a"), eq("audio/mp4"), eq("en_US"),
+                anyList()))
                 .thenReturn(new GroqSpeechToTextService.TranscriptionResult("I want to practice speaking.", "whisper-large-v3-turbo"));
 
         MockMultipartFile audio = new MockMultipartFile(
@@ -360,6 +363,130 @@ public class ChatbotControllerTest {
         verify(aiTokenQuotaService).consume(eq(1L), eq("speech-transcribe"), eq(100L), nullable(String.class), eq("127.0.0.1"));
     }
 
+    /**
+     * The learner's saved words reach Whisper, in the order that makes them useful.
+     *
+     * <p>"I am agree with you" came back as "I am angry with you" on a real device, and the
+     * tutor then corrected a sentence the learner never said. "agree" is in that learner's
+     * deck; the model was simply never told. Due-for-review words go first because they are
+     * what the app is about to drill, then the most recently added, because a word saved
+     * this week is one the learner is still trying to use.
+     */
+    @Test
+    void speechTranscribeHandsTheLearnersOwnWordsToWhisperDueFirstThenNewest() throws Exception {
+        // The ordering itself is the query's job now -- see WordRepository
+        // .findVocabularyHintWords, pinned in WordRepositoryVocabularyHintTest. Reading it
+        // here meant loading every row and hydrating every word's example sentences, on the
+        // one path where the learner has released the mic and is waiting. What is left to
+        // check here is that the controller hands the list on without reordering or losing it.
+        when(wordService.vocabularyHintWords(eq(1L), anyInt()))
+                .thenReturn(List.of("agree", " married ", "", "teacher"));
+        when(speechToTextService.transcribe(any(byte[].class), any(), any(), any(), anyList()))
+                .thenReturn(new GroqSpeechToTextService.TranscriptionResult("I am agree with you.", "whisper-large-v3-turbo"));
+
+        mockMvc.perform(multipart("/api/chatbot/speech/transcribe")
+                .file(new MockMultipartFile("audio", "speech.m4a", "audio/mp4", new byte[]{1, 2, 3, 4}))
+                .param("durationMs", "2100")
+                .header("X-User-Id", "1"))
+                .andExpect(status().isOk());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> vocabulary = ArgumentCaptor.forClass(List.class);
+        verify(speechToTextService).transcribe(any(byte[].class), any(), any(), any(), vocabulary.capture());
+        assertEquals(List.of("agree", "married", "teacher"), vocabulary.getValue(),
+                "the query's order survives, trimmed, with blanks dropped");
+    }
+
+    /**
+     * A broken word lookup must cost the learner nothing.
+     *
+     * <p>The hint is an accuracy improvement. If it could take a recording down with it, it
+     * would be a worse bug than the one it fixes — the learner held the microphone, spoke,
+     * and would get "could not transcribe speech" because of a table they never touched.
+     */
+    @Test
+    void speechTranscribeStillSucceedsWhenTheWordLookupFails() throws Exception {
+        when(wordService.vocabularyHintWords(eq(1L), anyInt()))
+                .thenThrow(new RuntimeException("db down"));
+        when(speechToTextService.transcribe(any(byte[].class), any(), any(), any(), anyList()))
+                .thenReturn(new GroqSpeechToTextService.TranscriptionResult("I am agree with you.", "whisper-large-v3-turbo"));
+
+        mockMvc.perform(multipart("/api/chatbot/speech/transcribe")
+                .file(new MockMultipartFile("audio", "speech.m4a", "audio/mp4", new byte[]{1, 2, 3, 4}))
+                .param("durationMs", "2100")
+                .header("X-User-Id", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.text").value("I am agree with you."));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> vocabulary = ArgumentCaptor.forClass(List.class);
+        verify(speechToTextService).transcribe(any(byte[].class), any(), any(), any(), vocabulary.capture());
+        assertEquals(List.of(), vocabulary.getValue(), "A failed lookup sends no hint, not a broken one");
+    }
+
+    /**
+     * The learner gets told when the transcript is worth a second look.
+     *
+     * <p>Until now the confidence numbers were read on the server, logged, and thrown away,
+     * so a learner who was misheard had no way to intervene: the wrong sentence went to the
+     * tutor and came back corrected as if they had said it. The threshold stays on the
+     * server — the client is handed a boolean, and the number behind it only so a bug report
+     * is enough to argue about where the line should sit.
+     */
+    @Test
+    void speechTranscribeReportsLowConfidenceAndTheNumberItCameFrom() throws Exception {
+        when(speechToTextService.transcribe(any(byte[].class), any(), any(), any(), anyList()))
+                .thenReturn(new GroqSpeechToTextService.TranscriptionResult(
+                        "I am angry with you.", "whisper-large-v3-turbo", 1.9, List.of(), true, -0.93));
+
+        mockMvc.perform(multipart("/api/chatbot/speech/transcribe")
+                .file(new MockMultipartFile("audio", "speech.m4a", "audio/mp4", new byte[]{1, 2, 3, 4}))
+                .param("durationMs", "2100")
+                .header("X-User-Id", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.text").value("I am angry with you."))
+                .andExpect(jsonPath("$.lowConfidence").value(true))
+                .andExpect(jsonPath("$.avgLogprob").value(-0.93));
+    }
+
+    /**
+     * Absent has to mean "no warning", for every client that predates this.
+     *
+     * <p>The shipped app does not read either key. It must keep behaving exactly as it does
+     * now, which means the server may never send a shape that reads as a warning by default:
+     * lowConfidence is false when there is nothing to say, and avgLogprob is absent rather
+     * than zero, because a zero log-probability means perfect confidence and would be a lie.
+     * The fields that were already on the wire are untouched.
+     */
+    @Test
+    void speechTranscribeNeverWarnsWhenThereIsNoConfidenceDataAndLeavesOldFieldsAlone() throws Exception {
+        when(speechToTextService.transcribe(any(byte[].class), any(), any(), any(), anyList()))
+                .thenReturn(new GroqSpeechToTextService.TranscriptionResult(
+                        "I want to practice speaking.", "whisper-large-v3-turbo"));
+
+        mockMvc.perform(multipart("/api/chatbot/speech/transcribe")
+                .file(new MockMultipartFile("audio", "speech.m4a", "audio/mp4", new byte[]{1, 2, 3, 4}))
+                .param("durationMs", "2100")
+                .header("X-User-Id", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.text").value("I want to practice speaking."))
+                .andExpect(jsonPath("$.model").value("whisper-large-v3-turbo"))
+                .andExpect(jsonPath("$.estimatedTokens").value(100))
+                .andExpect(jsonPath("$.durationMs").value(2100))
+                .andExpect(jsonPath("$.lowConfidence").value(false))
+                .andExpect(jsonPath("$.avgLogprob").doesNotExist());
+    }
+
+    private Word deckWord(String englishWord, LocalDate learnedDate, LocalDate nextReviewDate) {
+        Word word = new Word();
+        word.setEnglishWord(englishWord);
+        word.setLearnedDate(learnedDate);
+        word.setNextReviewDate(nextReviewDate);
+        return word;
+    }
+
     @Test
     void speechTranscribeRejectsTooLongAudioBeforeCallingGroq() throws Exception {
         MockMultipartFile audio = new MockMultipartFile(
@@ -378,7 +505,7 @@ public class ChatbotControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.reason").value("audio-too-long"));
 
-        verify(speechToTextService, never()).transcribe(any(), any(), any(), any());
+        verify(speechToTextService, never()).transcribe(any(), any(), any(), any(), anyList());
     }
 
     @Test

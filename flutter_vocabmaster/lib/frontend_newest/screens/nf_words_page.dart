@@ -141,6 +141,7 @@ class _NfWordsPageState extends State<NfWordsPage> {
     final List<String> origins = <String>[
       for (final String key in <String>[
         WordOrigins.reader,
+        WordOrigins.tutor,
         WordOrigins.dailyWords,
         WordOrigins.manual,
       ])

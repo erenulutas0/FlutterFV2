@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -82,6 +83,25 @@ public class WordService {
         List<Word> words = wordRepository.findByUserIdAndLanguageProfileId(userId, profileId);
         hydrateSentencesForWords(words);
         return words;
+    }
+
+    /**
+     * English words for the speech vocabulary hint, most likely to be said first.
+     *
+     * <p>Deliberately not {@link #getAllWords(Long)}: that hydrates every word's example
+     * sentences, and this needs one column of at most a few dozen rows, on the latency path
+     * between releasing the mic and hearing an answer.
+     *
+     * @param limit how many rows to read. Ask for more than the hint will use -- the caller
+     *     drops entries that are not single words, so a tight limit quietly shortens the hint.
+     */
+    public List<String> vocabularyHintWords(Long userId, int limit) {
+        Long profileId = resolveProfileId(userId, null);
+        return wordRepository.findVocabularyHintWords(
+                userId,
+                profileId,
+                LocalDate.now(ZoneOffset.UTC),
+                PageRequest.of(0, Math.max(1, limit)));
     }
 
     public Page<Word> getWordsPage(Long userId, int page, int size) {

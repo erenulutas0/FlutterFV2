@@ -18,9 +18,12 @@ import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 @Service
 public class GroqSpeechToTextService {
@@ -35,13 +38,28 @@ public class GroqSpeechToTextService {
      * duvar-saati (dokunma gecikmesi dahil) yerine dürüst hız hesabı sağlar.
      * words: kelime bazlı zaman damgaları (duraksamayı yakalamak için);
      * sağlayıcı vermezse boş liste.
+     *
+     * <p>lowConfidence / avgLogprob: whether this transcript is worth the learner
+     * double-checking, and the number that decision came from. The judgement is made here
+     * rather than on the device — see {@link #LOW_CONFIDENCE_AVG_LOGPROB_THRESHOLD}. Both
+     * default to "nothing to report" for the two-argument constructor, so a caller that
+     * predates them keeps compiling and keeps meaning "no warning".
      */
     public record TranscriptionResult(String text,
                                       String model,
                                       Double durationSeconds,
-                                      List<WordTiming> words) {
+                                      List<WordTiming> words,
+                                      boolean lowConfidence,
+                                      Double avgLogprob) {
         public TranscriptionResult(String text, String model) {
-            this(text, model, null, List.of());
+            this(text, model, null, List.of(), false, null);
+        }
+
+        public TranscriptionResult(String text,
+                                   String model,
+                                   Double durationSeconds,
+                                   List<WordTiming> words) {
+            this(text, model, durationSeconds, words, false, null);
         }
     }
 
@@ -79,6 +97,12 @@ public class GroqSpeechToTextService {
      *
      * <p>A Whisper prompt is for vocabulary and spelling hints — proper nouns, product
      * names. Prose belongs nowhere near it.
+     *
+     * <p>That correct use is now taken up by {@link #vocabularyHint(List)}, which builds a
+     * comma-separated list of the learner's own saved words. This property stays as the
+     * override: set, it replaces the generated hint entirely, so an operator can pin an
+     * exact prompt (or reproduce a bug report) without a deploy. It stays empty by default
+     * because the safe prompt is no prompt.
      */
     @Value("${groq.speech.prompt:}")
     private String prompt;
@@ -94,10 +118,24 @@ public class GroqSpeechToTextService {
         this.objectMapper = new ObjectMapper();
     }
 
+    /** Transcribes with no vocabulary hint — exactly the behaviour that shipped. */
     public TranscriptionResult transcribe(byte[] audioBytes,
                                           String filename,
                                           String contentType,
                                           String requestedLocale) {
+        return transcribe(audioBytes, filename, contentType, requestedLocale, List.of());
+    }
+
+    /**
+     * @param learnerVocabulary words this learner has actually saved, best candidates first.
+     *                          Empty, null, or unusable entries simply mean no hint is sent;
+     *                          this list can never be a reason a transcription fails.
+     */
+    public TranscriptionResult transcribe(byte[] audioBytes,
+                                          String filename,
+                                          String contentType,
+                                          String requestedLocale,
+                                          List<String> learnerVocabulary) {
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("Groq API key is not configured");
         }
@@ -107,6 +145,9 @@ public class GroqSpeechToTextService {
 
         String selectedLanguage = resolveLanguage(requestedLocale);
         String safeFilename = sanitizeFilename(filename);
+        // Resolved once, outside the try, so the echo guard below can compare the transcript
+        // against the exact string that was sent rather than rebuilding it.
+        String resolvedPrompt = resolvePrompt(learnerVocabulary);
 
         try {
             HttpHeaders headers = new HttpHeaders();
@@ -127,8 +168,8 @@ public class GroqSpeechToTextService {
             // this the check received nothing, correctly declined to guess, and passed every
             // hallucinated transcript straight through while looking like it was working.
             body.add("timestamp_granularities[]", "segment");
-            if (prompt != null && !prompt.isBlank()) {
-                body.add("prompt", prompt.trim());
+            if (!resolvedPrompt.isBlank()) {
+                body.add("prompt", resolvedPrompt);
             }
 
             HttpHeaders fileHeaders = new HttpHeaders();
@@ -151,16 +192,26 @@ public class GroqSpeechToTextService {
             // act is indistinguishable from acting correctly, so the inputs to the decision
             // have to be visible.
             log.info("Speech confidence: {}", describeConfidence(payload.get("segments")));
+            Double avgLogprob = worstAvgLogprob(payload.get("segments"));
             if (segmentsLookLikeSilence(payload.get("segments"))) {
                 log.info("Discarding transcript: model reports no speech. text='{}'", text);
                 text = "";
             } else if (isHallucinatedSilence(text)) {
                 log.info("Discarding hallucinated transcript for silent audio: '{}'", text);
                 text = "";
+            } else if (isPromptEcho(text, resolvedPrompt)) {
+                log.info("Discarding transcript: the model read the prompt back. text='{}'", text);
+                text = "";
             }
             Double durationSeconds = parseDuration(payload.get("duration"));
             List<WordTiming> words = parseWordTimings(payload.get("words"));
-            return new TranscriptionResult(text, model, durationSeconds, words);
+            // An empty transcript is not "shaky", it is nothing: the client already has a
+            // path for "we could not hear you", and adding a double-check warning on top of
+            // it would tell the learner to re-read words that are not there. avgLogprob is
+            // still reported, because a discarded transcript is exactly the case somebody
+            // will be reading a log line about later.
+            boolean lowConfidence = !text.isBlank() && isLowConfidence(avgLogprob);
+            return new TranscriptionResult(text, model, durationSeconds, words, lowConfidence, avgLogprob);
         } catch (RestClientResponseException e) {
             log.warn("Groq speech transcription failed: status={}, body={}", e.getStatusCode(), e.getResponseBodyAsString());
             throw new RuntimeException("Groq speech transcription failed: " + e.getStatusCode(), e);
@@ -168,6 +219,214 @@ public class GroqSpeechToTextService {
             log.warn("Groq speech transcription failed: {}", e.getMessage());
             throw new RuntimeException("Groq speech transcription failed", e);
         }
+    }
+
+    /**
+     * The configured prompt wins outright; otherwise the learner's own vocabulary.
+     *
+     * <p>Returns the literal string that goes on the wire, never null. Blank means no
+     * {@code prompt} part is sent at all, which is what a learner with no saved words and a
+     * default configuration gets — byte-for-byte the request that ships today.
+     */
+    private String resolvePrompt(List<String> learnerVocabulary) {
+        if (prompt != null && !prompt.isBlank()) {
+            return prompt.trim();
+        }
+        try {
+            return vocabularyHint(learnerVocabulary);
+        } catch (RuntimeException e) {
+            // Nothing in vocabularyHint throws today, and this still stays. The hint is an
+            // accuracy improvement; the recording is the learner's actual work. Whatever a
+            // future deck entry turns out to contain, losing the hint is the acceptable
+            // outcome and losing the transcription is not.
+            log.warn("Could not build the speech vocabulary hint; transcribing without one: {}", e.toString());
+            return "";
+        }
+    }
+
+    /**
+     * How many of the learner's words are worth sending.
+     *
+     * <p>Whisper's prompt window is about 224 tokens and everything past it is silently
+     * dropped, so the cap is a correctness property, not a tuning knob. English runs near
+     * four characters per token, which puts the window at roughly 900 characters;
+     * {@link #MAX_VOCABULARY_HINT_CHARS} takes half of that so that vocabulary — which is
+     * where a learner's rarer, multi-token words live — cannot overrun it.
+     *
+     * <p>{@link #MAX_VOCABULARY_HINT_WORDS} is the intent and the character budget is the
+     * guarantee: 48 entries at an average English word plus ", " is around 430 characters,
+     * so under normal decks the two caps agree and the count is what actually binds. 48
+     * rather than "as many as fit" because the hint is a bias, not a dictionary — a longer
+     * list spreads the model's attention across words the learner is not about to say, and
+     * the words that matter are the ones at the front.
+     */
+    static final int MAX_VOCABULARY_HINT_WORDS = 48;
+    static final int MAX_VOCABULARY_HINT_CHARS = 450;
+
+    /**
+     * A deck entry is a headword or a short phrase ("look forward to", "in spite of").
+     * Longer than three words it is a note or a sentence somebody typed into the wrong box,
+     * and prose is the one thing that must never reach this prompt.
+     */
+    static final int MAX_WORDS_PER_ENTRY = 3;
+    static final int MAX_ENTRY_CHARS = 32;
+
+    /**
+     * Punctuation that would make an entry read as a sentence, or break the list apart.
+     * Apostrophes and hyphens are deliberately absent: "don't" and "well-known" are words.
+     */
+    private static final Pattern PROSE_PUNCTUATION = Pattern.compile("[.,;:!?\"“”\\r\\n]");
+
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+
+    /**
+     * The learner's own words, as a comma-separated spelling hint.
+     *
+     * <p>This is the use the {@code prompt} field's comment describes and nobody had taken
+     * up. It exists because of the first real feedback this app ever received — "audio to
+     * text loses accuracy" — and the three transcripts captured behind it:
+     * "I am agree with you" heard as "I am angry with you", "I very like this app" as
+     * "I'm very naked", "I am married with a teacher" as "married with the future". Each one
+     * is worse than a plain mis-hear, because the tutor then corrects a sentence the learner
+     * never said. If "agree" is in the deck, Whisper is far less willing to hear "angry".
+     *
+     * <p>A list, never a sentence. That distinction is the whole of the bug this file's
+     * biggest comment records: the prompt is prepended as prior transcript text, so anything
+     * that reads like the start of a paragraph gets continued into invented subtitle
+     * boilerplate. A bare comma-separated list is what OpenAI documents for vocabulary
+     * hints, and it is enforced here rather than trusted: entries carrying sentence
+     * punctuation, or longer than {@link #MAX_WORDS_PER_ENTRY} words, are dropped outright.
+     *
+     * <p>Never throws and never returns null. A learner with nothing saved gets "", which
+     * sends no prompt at all.
+     */
+    static String vocabularyHint(List<String> learnerVocabulary) {
+        if (learnerVocabulary == null || learnerVocabulary.isEmpty()) {
+            return "";
+        }
+        Set<String> seen = new LinkedHashSet<>();
+        StringBuilder hint = new StringBuilder();
+        for (String raw : learnerVocabulary) {
+            if (seen.size() >= MAX_VOCABULARY_HINT_WORDS) {
+                break;
+            }
+            String entry = normalizeVocabularyEntry(raw);
+            if (entry == null || !seen.add(entry.toLowerCase(Locale.ROOT))) {
+                continue;
+            }
+            int separator = hint.length() == 0 ? 0 : 2;
+            if (hint.length() + separator + entry.length() > MAX_VOCABULARY_HINT_CHARS) {
+                // The list is ranked, so the budget is spent on the front of it. Stop rather
+                // than skip: everything after this point is a worse candidate anyway.
+                break;
+            }
+            if (hint.length() > 0) {
+                hint.append(", ");
+            }
+            hint.append(entry);
+        }
+        return hint.toString();
+    }
+
+    /** One deck entry, or null if it is not something that belongs in a Whisper prompt. */
+    private static String normalizeVocabularyEntry(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String entry = WHITESPACE.matcher(raw.trim()).replaceAll(" ");
+        if (entry.isEmpty() || entry.length() > MAX_ENTRY_CHARS) {
+            return null;
+        }
+        if (PROSE_PUNCTUATION.matcher(entry).find()) {
+            return null;
+        }
+        if (entry.split(" ").length > MAX_WORDS_PER_ENTRY) {
+            return null;
+        }
+        return entry;
+    }
+
+    /**
+     * Whisper handing the prompt straight back, which is the risk this feature opens.
+     *
+     * <p>The prompt is prior transcript text. Given silence and a list to continue, the
+     * model can do to a word list what it once did to the prose prompt: carry on writing it.
+     * A transcript that is letter-for-letter the hint we just sent is not speech.
+     *
+     * <p>Only fires on an exact match of a hint of at least {@link #MIN_ECHO_WORDS} words,
+     * because a false positive here deletes something a learner actually said — the failure
+     * this whole file is organised around avoiding. One deck word coming back as a
+     * one-word transcript is a learner saying that word, and it is left alone.
+     */
+    static final int MIN_ECHO_WORDS = 4;
+
+    static boolean isPromptEcho(String text, String promptSent) {
+        if (text == null || promptSent == null || promptSent.isBlank()) {
+            return false;
+        }
+        String normalizedPrompt = normalizeForEcho(promptSent);
+        if (normalizedPrompt.split(" ").length < MIN_ECHO_WORDS) {
+            return false;
+        }
+        return normalizedPrompt.equals(normalizeForEcho(text));
+    }
+
+    private static String normalizeForEcho(String value) {
+        String stripped = value.toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{Nd}]+", " ");
+        return WHITESPACE.matcher(stripped).replaceAll(" ").trim();
+    }
+
+    /**
+     * Below this, tell the learner the transcript is worth a second look.
+     *
+     * <p>The threshold lives here because the client must not have to know what a log
+     * probability is; it gets a boolean and the number behind it, nothing to interpret.
+     *
+     * <p>-0.8 sits deliberately between the two numbers this file already uses. Whisper's
+     * avg_logprob reads as roughly confident above -0.5 and shaky below -0.8, and
+     * {@link #AVG_LOGPROB_THRESHOLD} (-1.0) is already this file's line for "so unlikely
+     * this may not be speech at all". So the two form one scale rather than competing:
+     * -0.8 flags a transcript, -1.0 (together with a high no_speech_prob) discards it, and
+     * nothing can be flagged that was not first allowed through.
+     *
+     * <p>-0.8 rather than -0.5 for the reason {@link #segmentsLookLikeSilence} already gives:
+     * a poor log-probability on its own fires on a strong accent, which is most of this
+     * app's audience. A warning that appears on every genuine attempt is a warning learners
+     * stop reading, and then it protects nobody.
+     */
+    static final double LOW_CONFIDENCE_AVG_LOGPROB_THRESHOLD = -0.8;
+
+    /**
+     * The worst segment decides, not the average.
+     *
+     * <p>The tutor corrects the whole utterance, so one badly-heard clause is enough to make
+     * the correction wrong — "I am agree with you" heard as "I am angry with you" is three
+     * words inside a longer sentence. An average would let a long confident stretch bury a
+     * short garbled one, which is precisely the case the learner complained about.
+     *
+     * <p>Null when no segment carries the field. Absent data is not evidence of trouble,
+     * the same rule {@link #segmentsLookLikeSilence} applies in the other direction.
+     */
+    static Double worstAvgLogprob(Object rawSegments) {
+        if (!(rawSegments instanceof List<?> segments) || segments.isEmpty()) {
+            return null;
+        }
+        Double worst = null;
+        for (Object entry : segments) {
+            if (!(entry instanceof Map<?, ?> segment)) {
+                continue;
+            }
+            Double avgLogprob = asDouble(segment.get("avg_logprob"));
+            if (avgLogprob != null && (worst == null || avgLogprob < worst)) {
+                worst = avgLogprob;
+            }
+        }
+        return worst;
+    }
+
+    /** False for a missing number: no data means no warning, never a warning by default. */
+    static boolean isLowConfidence(Double avgLogprob) {
+        return avgLogprob != null && avgLogprob < LOW_CONFIDENCE_AVG_LOGPROB_THRESHOLD;
     }
 
     /** OpenAI's own decoding defaults for "this segment contains no speech". */

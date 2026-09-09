@@ -1831,7 +1831,8 @@ public class ChatbotController {
                     audio.getBytes(),
                     audio.getOriginalFilename(),
                     audio.getContentType(),
-                    locale);
+                    locale,
+                    speechVocabularyHint(userId));
             consumeAiTokens(userId, httpRequest, "speech-transcribe", estimatedTokens);
 
             Map<String, Object> result = new HashMap<>();
@@ -1855,6 +1856,18 @@ public class ChatbotController {
                                 "end", w.end()))
                         .toList());
             }
+            // Whether this transcript is worth the learner checking before it is sent to the
+            // tutor, decided on the server so the client never has to know what a log
+            // probability is. Always present so "absent" and "false" cannot drift apart on
+            // the wire; a client that predates the key ignores it and behaves as before,
+            // which is the same thing absent has to mean.
+            result.put("lowConfidence", transcription.lowConfidence());
+            // The number the boolean came from, so a bug report or a log line is enough to
+            // re-litigate the threshold. Omitted when the provider sent no segments, exactly
+            // as measuredDurationMs is omitted when the duration is unknown.
+            if (transcription.avgLogprob() != null) {
+                result.put("avgLogprob", transcription.avgLogprob());
+            }
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             log.error("Failed to transcribe speech for userId={}", userId, e);
@@ -1862,6 +1875,48 @@ public class ChatbotController {
                     "success", false,
                     "error", "Failed to transcribe speech",
                     "reason", "speech-transcription-failed"));
+        }
+    }
+
+    /**
+     * The learner's own words, ranked, for Whisper to bias its guesses towards.
+     *
+     * <p>The first real feedback this app received was "audio to text loses accuracy", and
+     * the captured examples are all the same shape: "I am agree with you" heard as "I am
+     * angry with you", "I very like this app" as "I'm very naked". The tutor then corrects a
+     * sentence the learner never said, which is worse than no transcription at all. A word
+     * the learner has saved is a word they are likely to reach for, so telling the model
+     * about it is the cheapest correction available.
+     *
+     * <p>Ranked due-for-review first, then most recently added. Those are the words a
+     * speaking session is actually built around: the review queue is what the app is about
+     * to drill, and a word saved this week is one the learner is still trying to use.
+     * Alphabetical order last, only so the same deck always produces the same hint and a bug
+     * report can be reproduced. {@code GroqSpeechToTextService} applies the size cap — the
+     * prompt window is its business, not the controller's.
+     *
+     * <p>Every failure path returns an empty list, and an empty list transcribes exactly as
+     * it did before this existed. A missing deck must never cost a learner their recording.
+     */
+    private List<String> speechVocabularyHint(Long userId) {
+        if (wordService == null || userId == null) {
+            return List.of();
+        }
+        try {
+            // Twice what the hint can hold. GroqSpeechToTextService drops entries that are
+            // not single words, so reading exactly the cap would quietly hand it a short
+            // list whenever a learner had saved a few phrases.
+            return wordService.vocabularyHintWords(userId, 96).stream()
+                    .filter(Objects::nonNull)
+                    .map(String::trim)
+                    .filter(word -> !word.isEmpty())
+                    .toList();
+        } catch (Exception e) {
+            // Deliberately swallowed. A transcription that succeeds without the hint is the
+            // behaviour that shipped; a transcription that fails because a word row could not
+            // be read would be a regression caused by an accuracy improvement.
+            log.warn("SPEECH_VOCABULARY_LOOKUP_FAILED userId={} error={}", userId, e.toString());
+            return List.of();
         }
     }
 

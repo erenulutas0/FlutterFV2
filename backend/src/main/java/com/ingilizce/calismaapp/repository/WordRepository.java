@@ -77,6 +77,28 @@ public interface WordRepository extends JpaRepository<Word, Long> {
     Page<Word> findByUserIdAndLanguageProfileId(@Param("userId") Long userId, @Param("profileId") Long profileId,
             Pageable pageable);
 
+    /**
+     * Just the English words, in the order a learner is most likely to say them.
+     *
+     * <p>For the Whisper vocabulary hint, which runs on every held mic button. The obvious
+     * call, getAllWords, resolves the profile, loads every row and then hydrates each word's
+     * example sentences -- all of it discarded here except one column, on the one path where
+     * the learner has already released the button and is waiting.
+     *
+     * <p>Ordered due-for-review first, then most recently added, then alphabetically. The
+     * last of those decides nothing pedagogically and exists so that a bug report about a
+     * missing word reproduces.
+     */
+    @Query("SELECT w.englishWord FROM Word w "
+            + "WHERE w.userId = :userId AND w.languageProfile.id = :profileId "
+            + "AND w.englishWord IS NOT NULL AND w.englishWord <> '' "
+            + "ORDER BY CASE WHEN w.nextReviewDate IS NOT NULL AND w.nextReviewDate <= :today "
+            + "THEN 0 ELSE 1 END, w.learnedDate DESC NULLS LAST, w.englishWord ASC")
+    List<String> findVocabularyHintWords(@Param("userId") Long userId,
+            @Param("profileId") Long profileId,
+            @Param("today") LocalDate today,
+            Pageable pageable);
+
     @Query("SELECT COUNT(w) FROM Word w WHERE w.userId = :userId AND w.languageProfile.id = :profileId")
     long countByUserIdAndLanguageProfileId(@Param("userId") Long userId, @Param("profileId") Long profileId);
 

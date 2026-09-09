@@ -21,6 +21,15 @@ class WordOrigins {
   /// Tapped out of a book in the reader.
   static const String reader = 'reader';
 
+  /// Kept from a conversation with the tutor — a word tapped in a chat bubble,
+  /// or a correction the learner chose to hang on to.
+  ///
+  /// Its own value rather than folded into [reader], because these two are the
+  /// answer to different questions. "From books" and "From speaking" tell a
+  /// learner which part of their practice a word is paying off in, and that is
+  /// the only reason anybody reads this label.
+  static const String tutor = 'tutor';
+
   /// The label key for [origin], or null when there is nothing to say.
   ///
   /// Null for a word saved before provenance was recorded, which is every word
@@ -35,6 +44,8 @@ class WordOrigins {
         return 'words.origin.manual';
       case reader:
         return 'words.origin.reader';
+      case tutor:
+        return 'words.origin.tutor';
       default:
         return null;
     }

@@ -298,13 +298,15 @@ void main() {
           note: 'boring = sıkıcı',
         ),
       );
-      expect(find.byType(Text), findsNWidgets(4));
+      // Four lines plus the label on the keep control, which the card grew when
+      // it stopped throwing the correction away after one reading.
+      expect(find.byType(Text), findsNWidgets(5));
 
       final Size without = await _pumpCard(
         tester,
         const TutorCorrection(said: 'I am boring', better: "I'm bored"),
       );
-      expect(find.byType(Text), findsNWidgets(3),
+      expect(find.byType(Text), findsNWidgets(4),
           reason: 'something is still being drawn where the note would be');
       expect(without.height, lessThan(withNote.height),
           reason: 'the card kept the note\'s height without the note in it');
