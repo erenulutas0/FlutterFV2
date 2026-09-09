@@ -648,14 +648,16 @@ class AppStateProvider extends ChangeNotifier {
 
     try {
       final quota = await _apiService.chatbotQuotaStatus();
-      await AnalyticsService.logTrialSnapshot(
-        trialActive: quota['trialActive'] == true,
-        daysRemaining: _toNullableInt(quota['trialDaysRemaining']),
-      );
-      await LocalReminderService().scheduleTrialExpiryReminder(
-        trialActive: quota['trialActive'] == true,
-        daysRemaining: _toNullableInt(quota['trialDaysRemaining']),
-      );
+
+      // Stored first, before anything is *done* about it. What the server just
+      // said about this learner's plan is the only thing in this method they
+      // would notice missing, and it used to be the last thing done: an
+      // analytics call and a reminder ran ahead of it, and a throw in either
+      // took the whole method to the catch with `merged` never built. That is
+      // not hypothetical -- scheduleTrialExpiryReminder threw on every release
+      // build (see android/app/proguard-rules.pro), so a subscriber's Pro state
+      // never reached the client, and the app went on showing the stale one it
+      // had cached. From the outside that is a subscription that keeps lapsing.
       final merged = Map<String, dynamic>.from(authUser)
         ..['aiAccessEnabled'] = quota['aiAccessEnabled'] == true
         ..['planCode'] = quota['planCode']
@@ -667,6 +669,9 @@ class AppStateProvider extends ChangeNotifier {
         ..['quotaDateUtc'] = quota['dateUtc'];
       await _authService.updateUser(merged);
       _hasResolvedAiEntitlement = true;
+
+      await _recordTrialBookkeeping(quota);
+
       return merged;
     } catch (e) {
       debugPrint('Error loading AI entitlement snapshot: $e');
@@ -674,6 +679,27 @@ class AppStateProvider extends ChangeNotifier {
       return authUser;
     } finally {
       _isLoadingAiEntitlement = false;
+    }
+  }
+
+  /// The analytics event and the trial-expiry reminder that follow a quota read.
+  ///
+  /// Both are worth doing and neither is worth an entitlement. Kept apart from
+  /// the merge above, and swallowing its own failures, so that whatever a
+  /// notification plugin or an analytics SDK does on some device it cannot
+  /// reach back and cost that device's owner the plan they are paying for.
+  Future<void> _recordTrialBookkeeping(Map<String, dynamic> quota) async {
+    try {
+      await AnalyticsService.logTrialSnapshot(
+        trialActive: quota['trialActive'] == true,
+        daysRemaining: _toNullableInt(quota['trialDaysRemaining']),
+      );
+      await LocalReminderService().scheduleTrialExpiryReminder(
+        trialActive: quota['trialActive'] == true,
+        daysRemaining: _toNullableInt(quota['trialDaysRemaining']),
+      );
+    } catch (e) {
+      debugPrint('Trial bookkeeping after the quota read failed: $e');
     }
   }
 

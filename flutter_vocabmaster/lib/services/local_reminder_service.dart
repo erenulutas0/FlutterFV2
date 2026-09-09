@@ -239,9 +239,31 @@ class LocalReminderService {
   }
 
   Future<void> refreshScheduledReminders() async {
-    if (await isDailyReminderEnabled()) {
-      await scheduleDailyReminder();
-      await scheduleStreakGuardReminder();
+    if (!await isDailyReminderEnabled()) {
+      return;
+    }
+    await _arm('daily', scheduleDailyReminder);
+    await _arm('streak guard', scheduleStreakGuardReminder);
+  }
+
+  /// Arms one reminder, keeping its failure to itself.
+  ///
+  /// These were two bare awaits in a row, inside [initialize]'s single try, so
+  /// anything thrown by the first silently took the second with it and the log
+  /// said "initialization skipped" about a plugin that had initialized
+  /// perfectly well. That is not hypothetical: every release build threw here
+  /// until android/app/proguard-rules.pro existed, and the streak reminder was
+  /// never even attempted.
+  ///
+  /// There is nothing to tell the learner and nothing for them to do, so this
+  /// stays a log line -- but it is a log line naming which reminder, because
+  /// "one of them did not arm" is what made the last one take a fortnight to
+  /// notice.
+  Future<void> _arm(String name, Future<void> Function() schedule) async {
+    try {
+      await schedule();
+    } catch (e) {
+      debugPrint('Reminder "$name" not scheduled: $e');
     }
   }
 
