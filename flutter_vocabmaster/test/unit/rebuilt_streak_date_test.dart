@@ -51,6 +51,45 @@ void main() {
     );
   });
 
+  group('which date startup restores', () {
+    String? restore({
+      String? recorded,
+      int streak = 1,
+      bool rebuilt = false,
+      String? fromWords = '2026-09-10',
+    }) =>
+        AppStateProvider.activityDateToRestore(
+          recorded: recorded,
+          streak: streak,
+          rebuiltFromWords: rebuilt,
+          lastDayFromWords: fromWords,
+        );
+
+    test('a count with no date gets one -- the case the first fix missed', () {
+      // current_streak 1, no last_activity_date, found on the phone running 472. The
+      // broken-streak check needs a date and the rebuild needs a zero count, so
+      // neither ran and the streak guard stayed cancelled.
+      expect(restore(recorded: null), '2026-09-10');
+      expect(restore(recorded: ''), '2026-09-10');
+    });
+
+    test('a rebuilt count replaces the stale date that broke the old one', () {
+      expect(restore(recorded: '2026-08-20', rebuilt: true), '2026-09-10');
+    });
+
+    test('a real date on a streak that was not rebuilt is left alone', () {
+      // It came from actual activity; word dates have no better claim to it.
+      expect(restore(recorded: '2026-09-09'), isNull);
+    });
+
+    test('nothing is written when there is nothing to date', () {
+      expect(restore(recorded: null, streak: 0), isNull);
+      expect(restore(recorded: null, fromWords: null), isNull);
+      expect(restore(recorded: '2026-09-10', rebuilt: true), isNull,
+          reason: 'rewriting the same date re-arms the guard for nothing');
+    });
+  });
+
   test('no words, no date', () {
     expect(AppStateProvider.lastStreakDayFromWords(const <Word>[], now: now), isNull);
   });

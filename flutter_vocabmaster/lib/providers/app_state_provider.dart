@@ -555,26 +555,35 @@ class AppStateProvider extends ChangeNotifier {
       }
 
       // SharedPreferences boş ama kelime geçmişi varsa streak'i kelimelerden geri kur.
+      bool rebuiltFromWords = false;
       if (currentStreak <= 0 && actualTotalWords > 0) {
         currentStreak = _calculateStreakFromWords(_allWords);
         if (currentStreak > 0) {
           await prefs.setInt('current_streak', currentStreak);
-          // The date as well as the count. Writing only the count left
-          // last_activity_date empty, or weeks stale, on a phone whose words came in
-          // by a path that never credited the day -- and the streak guard reads the
-          // date: with none it cancels itself, so the reminder whose whole job is to
-          // protect a streak was never armed for a learner who had one. Reminders were
-          // already armed before this ran (LocalReminderService.initialize is called
-          // from main), so the guard is asked again here rather than at next launch.
-          final String? lastDay = lastStreakDayFromWords(_allWords);
-          if (lastDay != null && lastDay != lastActivityDate) {
-            await prefs.setString('last_activity_date', lastDay);
-            try {
-              await LocalReminderService().scheduleStreakGuardReminder();
-            } catch (e) {
-              debugPrint('Streak reminder scheduling skipped: $e');
-            }
-          }
+          rebuiltFromWords = true;
+        }
+      }
+
+      // The date as well as the count. Writing only the count left
+      // last_activity_date empty, or weeks stale, on a phone whose words came in by a
+      // path that never credited the day -- and the streak guard reads the date: with
+      // none it cancels itself, so the reminder whose whole job is to protect a streak
+      // was never armed for a learner who had one. Reminders were already armed before
+      // this ran (LocalReminderService.initialize is called from main), so the guard is
+      // asked again here rather than at the next launch.
+      final String? restoredDay = activityDateToRestore(
+        recorded: lastActivityDate,
+        streak: currentStreak,
+        rebuiltFromWords: rebuiltFromWords,
+        lastDayFromWords:
+            actualTotalWords > 0 ? lastStreakDayFromWords(_allWords) : null,
+      );
+      if (restoredDay != null) {
+        await prefs.setString('last_activity_date', restoredDay);
+        try {
+          await LocalReminderService().scheduleStreakGuardReminder();
+        } catch (e) {
+          debugPrint('Streak reminder scheduling skipped: $e');
         }
       }
 
@@ -742,6 +751,32 @@ class AppStateProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint('Error seeding base XP: $e');
     }
+  }
+
+  /// Which last_activity_date startup should write, or null to leave it alone.
+  ///
+  /// Two cases need one, and the first commit only handled the second:
+  ///
+  /// * A count with no date at all. Seen on a device: current_streak 1, no
+  ///   last_activity_date. The "streak broken" check needs a date to compare, so it
+  ///   was skipped; the count was positive, so the rebuild was skipped; and the date
+  ///   write lived inside the rebuild. The streak guard read no date and cancelled.
+  /// * A count just rebuilt from word dates, whose recorded date is the stale one
+  ///   that made the old count look broken.
+  ///
+  /// A recorded date on a streak that was not rebuilt is left as it is: it came from
+  /// real activity, and the words have no better claim than that.
+  @visibleForTesting
+  static String? activityDateToRestore({
+    required String? recorded,
+    required int streak,
+    required bool rebuiltFromWords,
+    required String? lastDayFromWords,
+  }) {
+    if (streak <= 0 || lastDayFromWords == null) return null;
+    final bool missing = recorded == null || recorded.isEmpty;
+    if (!missing && !rebuiltFromWords) return null;
+    return lastDayFromWords == recorded ? null : lastDayFromWords;
   }
 
   /// The last day of the streak [_calculateStreakFromWords] counts: today if a word
