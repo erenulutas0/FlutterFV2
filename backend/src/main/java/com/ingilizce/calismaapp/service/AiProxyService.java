@@ -157,10 +157,35 @@ Be comprehensive - include ALL common meanings and word types for "%s".
         return dictionaryExplainWordInSentence(word, sentence, LearningLanguageProfile.defaultProfile());
     }
 
+    /**
+     * What one word means where the learner just tapped it.
+     *
+     * <p>This is the back of a flashcard. A learner taps a word in a book or in a
+     * conversation, the answer is stored as that word's meaning, and it is what they will
+     * be shown in review with the word on the front.
+     *
+     * <p>Which is why the wording works this hard. Asked to "explain the meaning of the
+     * word inside this specific sentence", the model explained the sentence: tapping
+     * "planning" in "Oh, what are you planning to add there?" returned "Eklemek istediğin
+     * şey ne?", a translation of the question, and tapping "to" in the same line returned
+     * a gloss with the sentence's meaning stapled to it. Fifteen words of budget invited
+     * exactly that. The instruction that stops it is not a better description of the job
+     * but the mistake, named -- the same thing that was true of the tutor's correction
+     * note, and the reason the sentence is stated first and the word second here: the
+     * sentence is context for reading the word, not the thing being asked about.
+     */
     public AiJsonResult dictionaryExplainWordInSentence(String word, String sentence, LearningLanguageProfile profile) {
-        String prompt = "Explain the meaning of the word '%s' inside this specific sentence: '%s'. Provide the definition in %s, keeping it very short/concise (max 15 words). Return ONLY valid JSON. Format: { \"definition\": \"...\" }"
-                .formatted(word, sentence, profile.sourceLanguage());
-        String system = "You are a dictionary helper. Return valid JSON.";
+        String language = profile.sourceLanguage();
+        String prompt = ("Sentence: \"%s\"\n"
+                + "Word: \"%s\"\n\n"
+                + "Give the meaning of that one word as it is used there, written in %s. "
+                + "At most 8 words, no final full stop -- a dictionary gloss, not a sentence.\n\n"
+                + "Do not translate the sentence. Do not paraphrase it. Do not answer a "
+                + "question it asks. If the word is grammatical rather than lexical (\"to\", "
+                + "\"the\", \"of\"), say what it does, still in %s.\n\n"
+                + "Return ONLY valid JSON. Format: { \"definition\": \"...\" }")
+                .formatted(sentence, word, language, language);
+        String system = "You are a dictionary. You define single words, never sentences. Return valid JSON.";
         return callJson(system, prompt, 120, 0.3, "dictionary-explain");
     }
 

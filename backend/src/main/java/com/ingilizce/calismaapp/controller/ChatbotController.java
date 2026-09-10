@@ -2098,7 +2098,11 @@ public class ChatbotController {
             return ResponseEntity.badRequest().body(Map.of("error", "word and sentence are required"));
         }
 
-        String cacheKey = DICTIONARY_CACHE_KEY_PREFIX + "explain:"
+        // "explain2" and not "explain": the key is language + word + sentence and says
+        // nothing about the prompt, so rewording the prompt leaves every definition the
+        // old one produced being served for the rest of its TTL. Bumping the segment
+        // retires them without a flush, and costs one regenerated lookup per word.
+        String cacheKey = DICTIONARY_CACHE_KEY_PREFIX + "explain2:"
                 + languageCachePart(languageProfile) + ":" + normalizeCacheToken(word) + ":" + normalizeCacheToken(sentence);
         try {
             Optional<Map<String, Object>> cached = loadMapFromCache(cacheKey);
