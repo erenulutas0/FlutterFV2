@@ -156,6 +156,47 @@ class ChatbotFixInstructionsTest {
     }
 
     @Test
+    @DisplayName("a note gives a reason, never a label")
+    void aNoteIsNotALabel() throws Exception {
+        // From a tester, about the card for "I had like": the note read "\"had like\" is
+        // not idiomatic; use \"would like\" for polite requests", and they wrote back that
+        // explanations like that are not going to help anyone. "Not idiomatic" says the
+        // words are wrong, which the strikethrough already said, in a word the learner has
+        // to look up. The prompt asked for WHY and the model answered with a verdict;
+        // naming the verdict is what stops it.
+        String text = fixInstructions();
+
+        assertThat(text).contains("NEVER a label either");
+        assertThat(text).contains("\"Not idiomatic\"");
+        assertThat(text).contains("no grammar term the learner");
+    }
+
+    @Test
+    @DisplayName("a mistake whose words mean nothing is demonstrated too")
+    void aFormMistakeIsDemonstrated() throws Exception {
+        // "I am boring" means something -- the wrong thing -- and its note says what. "I had
+        // like" and "I am agree" mean nothing, and with only the first example to copy the
+        // model had no shape for them and reached for a label.
+        assertThat(fixInstructions()).contains("[[FIX]] I am agree -> I agree || ");
+
+        assertThat(fixInstructions(learner("Spanish", "B1")))
+                .contains("ya significa \"estar de acuerdo\"");
+        assertThat(fixInstructions(learner("Turkish", "B1")))
+                .contains("tek başına \"katılıyorum\" demek");
+
+        // Same rule as the first example: a language with no note of its own would get the
+        // English one, and an English demonstration is what produced English notes.
+        for (String language : new String[] {
+                "Turkish", "German", "French", "Italian", "Portuguese", "Spanish"}) {
+            assertThat(fixInstructions(learner(language, "B1")))
+                    .as("form example for %s", language)
+                    .doesNotContain("already says the whole thing");
+        }
+        assertThat(fixInstructions(learner("English", "B1")))
+                .contains("already says the whole thing");
+    }
+
+    @Test
     @DisplayName("and it is written in the language the note is asked for")
     void theExampleSpeaksTheLearnersLanguage() throws Exception {
         // Seen on a device: a Turkish B2 learner said "I very like this app" and the card

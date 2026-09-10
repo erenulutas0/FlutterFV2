@@ -252,6 +252,33 @@ public class ChatbotService {
     };
   }
 
+  /**
+   * The second worked example's note: a mistake whose words mean nothing as they stand.
+   *
+   * <p>"I am boring" means something -- the wrong thing -- so its note can say what. A
+   * tester who said "I had like" on purpose got "\"had like\" is not idiomatic; use
+   * \"would like\" for polite requests" and said, fairly, that it would not help anyone.
+   * With only a meaning example to copy, the model had no shape for words that mean nothing
+   * and reached for a verdict instead. This is the shape: say what the right word already
+   * carries, and the learner can see for themselves what the extra one was doing.
+   *
+   * <p>"I am agree" because it is the error the prompt already names, and the one Spanish
+   * and Turkish speakers make most -- "estoy de acuerdo", "katılıyorum" -- so the example
+   * is also a mistake the model will actually be asked to explain.
+   */
+  private static String exampleFormNote(String nativeLanguage) {
+    return switch (nativeLanguage) {
+      case "Turkish" -> "\"agree\" tek başına \"katılıyorum\" demek; önüne \"am\" gelmez.";
+      case "German" -> "\"agree\" heißt schon \"zustimmen\"; ein \"am\" davor braucht es nicht.";
+      case "French" -> "\"agree\" veut déjà dire \"être d'accord\" ; pas besoin de \"am\".";
+      case "Italian" -> "\"agree\" significa già \"essere d'accordo\"; non serve \"am\".";
+      case "Portuguese" -> "\"agree\" já quer dizer \"concordar\"; não precisa de \"am\".";
+      case "Spanish" -> "\"agree\" ya significa \"estar de acuerdo\"; no lleva \"am\".";
+      case "Indonesian" -> "\"agree\" sudah berarti \"setuju\"; tidak perlu \"am\".";
+      default -> "\"agree\" already says the whole thing, so there is no \"am\" before it.";
+    };
+  }
+
   private static String fixInstructions(LearningLanguageProfile profile) {
     String nativeLanguage = profile.sourceLanguage();
     String level = profile.englishLevel();
@@ -282,8 +309,15 @@ HOW TO OFFER A CORRECTION:
 - A good note says WHY the words were wrong, or what they actually mean to a native
   speaker. It is NEVER a translation of the corrected words -- the learner can already
   read those. ONE short sentence, no longer.
+- It is NEVER a label either. "Not idiomatic", "incorrect", "not natural" and
+  "grammatically wrong" only repeat what the card already shows by striking the words
+  through. Say the reason in everyday words, with no grammar term the learner would
+  have to look up.
 - Worked example, for a learner who said "I am boring" and meant that they were bored:
 %s I am boring %s I'm bored %s %s
+- Worked example, for words that mean nothing as they stand -- a learner who said
+  "I am agree":
+%s I am agree %s I agree %s %s
 %s
 - Correct only what they actually said. Never invent a mistake to have something to show.
 - One line at most, ever, and nothing after the note.
@@ -291,6 +325,7 @@ HOW TO OFFER A CORRECTION:
         FIX_MARKER, FIX_SEPARATOR, FIX_NOTE_SEPARATOR, nativeLanguage,
         FIX_NOTE_SEPARATOR, nativeLanguage, nativeLanguage,
         FIX_MARKER, FIX_SEPARATOR, FIX_NOTE_SEPARATOR, exampleNote(nativeLanguage),
+        FIX_MARKER, FIX_SEPARATOR, FIX_NOTE_SEPARATOR, exampleFormNote(nativeLanguage),
         notePolicy);
   }
 
