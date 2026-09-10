@@ -146,11 +146,61 @@ class ChatbotWholeSentenceTest {
         assertTrue(a1.contains("[[FIX]] I am boring -> I'm bored || "));
         assertFalse(a1.contains("[[FIX]] I am agree -> I agree || "),
                 "an A1 card has room for one line, and the example must not show two");
-        assertTrue(a1.contains("[[SENTENCE]] I'm bored and I agree with you."));
+        assertTrue(a1.contains("[[SENTENCE]] I'm bored. I agree with you."));
 
         String b2 = fixInstructions("B2");
         assertTrue(b2.contains("[[FIX]] I am boring -> I'm bored || "));
         assertTrue(b2.contains("[[FIX]] I am agree -> I agree || "));
-        assertTrue(b2.contains("[[SENTENCE]] I'm bored and I agree with you."));
+        assertTrue(b2.contains("[[SENTENCE]] I'm bored. I agree with you."));
+    }
+
+    @Test
+    @DisplayName("several sentences are all of them, start to end")
+    void thePromptAsksForEveryPart() throws Exception {
+        // The first device run dropped the learner's whole first clause. The example is two
+        // sentences now because a model copies the example before it follows the rule.
+        String text = fixInstructions("B2");
+
+        assertTrue(text.contains("it starts where the learner started and ends where"));
+        assertTrue(text.contains("never leaves a part out"));
+        assertTrue(text.contains("\"I am boring. I am agree with you.\""));
+    }
+
+    private static final String SAID =
+            "This is complicating more, why don't you explain what's the steamed milk and latte more simpler?";
+
+    @Test
+    @DisplayName("a sentence that cut part of the message is not the whole sentence")
+    void theDeviceCaseIsDropped() {
+        // Exactly what the first device run produced: the first clause gone.
+        List<ChatbotService.Correction> listed = List.of(
+                new ChatbotService.Correction("more simpler", "simpler"),
+                new ChatbotService.Correction("what's the steamed milk and latte", "what steamed milk and latte are"));
+
+        assertFalse(ChatbotService.keepsTheRestOf(
+                "Why don't you explain what steamed milk and latte are simpler?", SAID, listed));
+    }
+
+    @Test
+    @DisplayName("the whole message, fixed, is kept -- listed or not")
+    void aFullSentenceIsKept() {
+        List<ChatbotService.Correction> listed = List.of(
+                new ChatbotService.Correction("more simpler", "more simply"),
+                new ChatbotService.Correction("what's the steamed milk and latte", "what steamed milk and a latte are"));
+        String whole = "This is getting more complicated. Why don't you explain what steamed milk "
+                + "and a latte are, more simply?";
+
+        // "This is complicating more" was fixed in the sentence without a line of its own --
+        // exactly what the sentence is for -- and most of the untouched words survive.
+        assertTrue(ChatbotService.keepsTheRestOf(whole, SAID, listed));
+        assertTrue(ChatbotService.keepsTheRestOf(whole.replace('\'', '\u2019'), SAID, listed),
+                "the model's curly apostrophe is the learner's straight one");
+    }
+
+    @Test
+    @DisplayName("a short message has too little outside its corrections to judge")
+    void shortMessagesStand() {
+        assertTrue(ChatbotService.keepsTheRestOf("I went home.", "I go home",
+                List.of(new ChatbotService.Correction("I go", "I went"))));
     }
 }

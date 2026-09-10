@@ -364,15 +364,15 @@ public class ChatbotService {
    */
   private static String workedExample(String nativeLanguage, int maxChanges) {
     StringBuilder out = new StringBuilder()
-        .append("- Worked example, for a learner who said \"I am boring and I am agree with you.\"\n")
-        .append("  and meant that they were bored:\n")
+        .append("- Worked example, for a learner who said \"I am boring. I am agree with you.\"\n")
+        .append("  and meant that they were bored -- two sentences, so the last line has both:\n")
         .append(FIX_MARKER).append(" I am boring ").append(FIX_SEPARATOR).append(" I'm bored ")
         .append(FIX_NOTE_SEPARATOR).append(' ').append(exampleNote(nativeLanguage)).append('\n');
     if (maxChanges >= 2) {
       out.append(FIX_MARKER).append(" I am agree ").append(FIX_SEPARATOR).append(" I agree ")
           .append(FIX_NOTE_SEPARATOR).append(' ').append(exampleFormNote(nativeLanguage)).append('\n');
     }
-    out.append(SENTENCE_MARKER).append(" I'm bored and I agree with you.");
+    out.append(SENTENCE_MARKER).append(" I'm bored. I agree with you.");
     if (maxChanges < 2) {
       out.append("\n  Only one line fits at this level, so it is the mistake that changes the meaning;\n")
           .append("  the last line still fixes both.");
@@ -402,9 +402,12 @@ HOW TO OFFER A CORRECTION:
   speaker would say it:
 %s the whole message, corrected
   It keeps their words, their meaning and their tone and changes only what was wrong:
-  their sentence fixed, not a better sentence. It fixes EVERY mistake in the message,
-  including any you had no room to list, because it is how the learner sees that the rest
-  of what they said needed work too. Nothing comes after it.
+  their sentence fixed, not a better sentence. If the message is several sentences or
+  clauses, this line is all of them: it starts where the learner started and ends where
+  they ended, and never leaves a part out, whether that part had a mistake or not. It
+  fixes EVERY mistake in the message, including any you had no room to list, because it
+  is how the learner sees that the rest of what they said needed work too. Nothing comes
+  after it.
 - A mistake is anything a native speaker would not say: grammar ("I am agree"), and also
   word choice carried over from another language ("open the light", "married with",
   "explain me", "I am boring" meant as "I'm bored"). The meaning being clear does not
@@ -500,6 +503,12 @@ HOW TO OFFER A CORRECTION:
     String correctedSentence =
         corrections.isEmpty() ? null : extractCorrectedSentence(result.content());
     if (correctedSentence != null && sameWords(correctedSentence, message)) {
+      correctedSentence = null;
+    }
+    // And only when it is the whole message. See keepsTheRestOf.
+    if (correctedSentence != null && !keepsTheRestOf(correctedSentence, message, corrections)) {
+      logger.info("Dropping a corrected sentence that left part of the message out: '{}'",
+          correctedSentence);
       correctedSentence = null;
     }
     String reply = stripCorrection(result.content());
@@ -697,6 +706,56 @@ HOW TO OFFER A CORRECTION:
       }
     }
     return sentence;
+  }
+
+  /**
+   * Whether [sentence] still carries the parts of [message] that no correction changed.
+   *
+   * <p>The first time the whole-sentence card ran on a device, the learner said "This is
+   * complicating more, why don't you explain what's the steamed milk and latte more
+   * simpler?" and the card led with "Why don't you explain what steamed milk and latte are
+   * simpler?" -- the first clause simply gone, uncorrected and unlisted. A partial sentence
+   * presented as "say it like this" tells the learner that half of what they said is not
+   * worth saying, which is worse than the one-line card this replaced.
+   *
+   * <p>The words outside every listed correction are the ones the model was told to keep,
+   * or to fix without room to list. Most of them must survive; when fewer than
+   * [KEPT_WORDS_RATIO] do, something was cut. There, four of eight survived. A sentence that
+   * fixes an unlisted mistake changes a word or two, not half. Below three such words there
+   * is too little to judge, and the sentence stands.
+   */
+  static boolean keepsTheRestOf(String sentence, String message, List<Correction> corrections) {
+    List<String> outside = new ArrayList<>(wordList(message));
+    for (Correction correction : corrections) {
+      for (String word : wordList(correction.said())) {
+        outside.remove(word);
+      }
+    }
+    if (outside.size() < 3) {
+      return true;
+    }
+    Set<String> kept = new HashSet<>(wordList(sentence));
+    long survived = outside.stream().filter(kept::contains).count();
+    return survived >= Math.ceil(outside.size() * KEPT_WORDS_RATIO);
+  }
+
+  /** Six in ten of the words no correction touched. */
+  private static final double KEPT_WORDS_RATIO = 0.6;
+
+  private static List<String> wordList(String text) {
+    List<String> words = new ArrayList<>();
+    if (text == null) {
+      return words;
+    }
+    // A model writes "don’t" as often as "don't"; Whisper writes the second. Split on the
+    // curly one and "don't" would count as lost from a sentence that kept it.
+    String plain = text.replace('\u2019', '\'').toLowerCase(Locale.ROOT);
+    for (String word : plain.split("[^\\p{L}\\p{N}']+")) {
+      if (!word.isEmpty()) {
+        words.add(word);
+      }
+    }
+    return words;
   }
 
   /** Whether two texts are the same words, ignoring case, punctuation and spacing. */
