@@ -476,7 +476,36 @@ public class ChatbotControllerTest {
                 .andExpect(jsonPath("$.estimatedTokens").value(100))
                 .andExpect(jsonPath("$.durationMs").value(2100))
                 .andExpect(jsonPath("$.lowConfidence").value(false))
-                .andExpect(jsonPath("$.avgLogprob").doesNotExist());
+                .andExpect(jsonPath("$.avgLogprob").doesNotExist())
+                .andExpect(jsonPath("$.otherLanguage").value(false))
+                .andExpect(jsonPath("$.detectedLanguage").doesNotExist());
+    }
+
+    /**
+     * The learner gets told when what they said was not English at all.
+     *
+     * <p>A Turkish sentence forced through an English transcriber comes back as confident
+     * nonsense, so lowConfidence on its own never fires. The service folds the language
+     * verdict into it, so the shipped app asks before sending; the verdict also travels on
+     * its own, with the provider's name for the language, so a later client can say why.
+     */
+    @Test
+    void speechTranscribeReportsWhenTheAudioWasNotEnglish() throws Exception {
+        when(speechToTextService.transcribe(any(byte[].class), any(), any(), any(), anyList()))
+                .thenReturn(new GroqSpeechToTextService.TranscriptionResult(
+                        "No, so, so, name me.", "whisper-large-v3-turbo", 2.4, List.of(), true, -0.35,
+                        true, "turkish"));
+
+        mockMvc.perform(multipart("/api/chatbot/speech/transcribe")
+                .file(new MockMultipartFile("audio", "speech.m4a", "audio/mp4", new byte[]{1, 2, 3, 4}))
+                .param("durationMs", "2600")
+                .header("X-User-Id", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.text").value("No, so, so, name me."))
+                .andExpect(jsonPath("$.lowConfidence").value(true))
+                .andExpect(jsonPath("$.otherLanguage").value(true))
+                .andExpect(jsonPath("$.detectedLanguage").value("turkish"))
+                .andExpect(jsonPath("$.avgLogprob").value(-0.35));
     }
 
     private Word deckWord(String englishWord, LocalDate learnedDate, LocalDate nextReviewDate) {

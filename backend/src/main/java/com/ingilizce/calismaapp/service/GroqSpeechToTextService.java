@@ -23,6 +23,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 
 @Service
@@ -44,22 +49,85 @@ public class GroqSpeechToTextService {
      * rather than on the device — see {@link #LOW_CONFIDENCE_AVG_LOGPROB_THRESHOLD}. Both
      * default to "nothing to report" for the two-argument constructor, so a caller that
      * predates them keeps compiling and keeps meaning "no warning".
+     *
+     * <p>otherLanguage / detectedLanguage: whether a second, unpinned pass over the same
+     * audio concluded it was not English, and what it called the language. The pinned
+     * transcription cannot report this -- forced to English, it produces English -- and it
+     * is the case the confidence number is blind to: a Turkish sentence comes back as
+     * confident English nonsense. otherLanguage is already folded into lowConfidence, so a
+     * client that reads only that still asks before sending; it is kept separately so a
+     * later client can say why it is asking.
      */
     public record TranscriptionResult(String text,
                                       String model,
                                       Double durationSeconds,
                                       List<WordTiming> words,
                                       boolean lowConfidence,
-                                      Double avgLogprob) {
+                                      Double avgLogprob,
+                                      boolean otherLanguage,
+                                      String detectedLanguage) {
         public TranscriptionResult(String text, String model) {
-            this(text, model, null, List.of(), false, null);
+            this(text, model, null, List.of(), false, null, false, null);
         }
 
         public TranscriptionResult(String text,
                                    String model,
                                    Double durationSeconds,
                                    List<WordTiming> words) {
-            this(text, model, durationSeconds, words, false, null);
+            this(text, model, durationSeconds, words, false, null, false, null);
+        }
+
+        /** Confidence without a language verdict: what every caller before detection meant. */
+        public TranscriptionResult(String text,
+                                   String model,
+                                   Double durationSeconds,
+                                   List<WordTiming> words,
+                                   boolean lowConfidence,
+                                   Double avgLogprob) {
+            this(text, model, durationSeconds, words, lowConfidence, avgLogprob, false, null);
+        }
+    }
+
+    /**
+     * What the unpinned pass concluded about the language actually spoken.
+     *
+     * <p>{@code detected} is the provider's own name for it when the response carried one,
+     * else a script-based guess, else null. {@code other} is the one thing the caller acts
+     * on, and it is true only on positive evidence that the audio was not English. Absent
+     * data is never evidence -- the rule this whole file already follows.
+     */
+    record SpokenLanguage(boolean other, String detected) {
+        static final SpokenLanguage UNKNOWN = new SpokenLanguage(false, null);
+
+        static SpokenLanguage from(Map<String, Object> payload, String pinnedTranscript) {
+            if (payload == null) {
+                return UNKNOWN;
+            }
+            Object named = payload.get("language");
+            if (named != null && !named.toString().isBlank()) {
+                String language = named.toString().trim().toLowerCase(Locale.ROOT);
+                return new SpokenLanguage(!isEnglish(language), language);
+            }
+            // No language field. Groq's documentation shows none in its verbose_json
+            // example, so this cannot be the only path or the feature silently does
+            // nothing -- the mistake the silence check spent a release making. A free
+            // transcript that carries letters English does not use, where the pinned one
+            // does not, was not English: ç ğ ı ö ş ü, ä ß, é ñ, and every non-Latin script.
+            String free = payload.get("text") == null ? "" : payload.get("text").toString();
+            if (hasLettersEnglishLacks(free) && !hasLettersEnglishLacks(pinnedTranscript)) {
+                return new SpokenLanguage(true, "non-english-script");
+            }
+            return UNKNOWN;
+        }
+
+        /** "en" and "english" are both seen in the wild; nothing else is English. */
+        static boolean isEnglish(String language) {
+            return language.startsWith("en");
+        }
+
+        static boolean hasLettersEnglishLacks(String text) {
+            return text != null
+                    && text.codePoints().anyMatch(cp -> Character.isLetter(cp) && cp > 127);
         }
     }
 
@@ -107,6 +175,31 @@ public class GroqSpeechToTextService {
     @Value("${groq.speech.prompt:}")
     private String prompt;
 
+    /**
+     * Whether every transcription is paired with an unpinned pass to check the language.
+     *
+     * <p>On by default under Spring; false when the service is built with {@code new},
+     * which is how the older unit tests build it, so they keep seeing exactly one request.
+     * Groq bills a minimum of ten seconds per request, so the second pass costs about a
+     * hundredth of a cent, and because it runs in parallel it costs no latency.
+     */
+    @Value("${groq.speech.detect-language:true}")
+    private boolean detectLanguage;
+
+    /** How long, once the transcript is back, the detection is still worth waiting for. */
+    @Value("${groq.speech.detect-language-wait-ms:1500}")
+    private long detectionWaitMillis = 1500;
+
+    /**
+     * Daemon threads, so an unanswered detection can never keep the JVM from stopping;
+     * cached, so an idle service holds none.
+     */
+    private final ExecutorService detectionExecutor = Executors.newCachedThreadPool(runnable -> {
+        Thread thread = new Thread(runnable, "speech-language-detect");
+        thread.setDaemon(true);
+        return thread;
+    });
+
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
@@ -148,6 +241,14 @@ public class GroqSpeechToTextService {
         // Resolved once, outside the try, so the echo guard below can compare the transcript
         // against the exact string that was sent rather than rebuilding it.
         String resolvedPrompt = resolvePrompt(learnerVocabulary);
+
+        // Started before the transcription and read after it, so on the path the learner
+        // is waiting on it costs nothing; see detectSpokenLanguage for why it exists.
+        CompletableFuture<Map<String, Object>> detection = detectLanguage
+                ? CompletableFuture.supplyAsync(
+                        () -> detectSpokenLanguage(audioBytes, safeFilename, contentType),
+                        detectionExecutor)
+                : null;
 
         try {
             HttpHeaders headers = new HttpHeaders();
@@ -210,14 +311,79 @@ public class GroqSpeechToTextService {
             // it would tell the learner to re-read words that are not there. avgLogprob is
             // still reported, because a discarded transcript is exactly the case somebody
             // will be reading a log line about later.
-            boolean lowConfidence = !text.isBlank() && isLowConfidence(avgLogprob);
-            return new TranscriptionResult(text, model, durationSeconds, words, lowConfidence, avgLogprob);
+            SpokenLanguage spoken = awaitDetection(detection, text);
+            log.info("Speech language: {}", spoken);
+            // Either signal is enough to hold the transcript for a second look. The learner
+            // sees the same English transcript either way; what changes is that they are
+            // asked before it is sent, instead of being corrected for words they never said.
+            boolean otherLanguage = !text.isBlank() && spoken.other();
+            boolean lowConfidence = !text.isBlank() && (isLowConfidence(avgLogprob) || otherLanguage);
+            return new TranscriptionResult(text, model, durationSeconds, words, lowConfidence, avgLogprob,
+                    otherLanguage, spoken.detected());
         } catch (RestClientResponseException e) {
             log.warn("Groq speech transcription failed: status={}, body={}", e.getStatusCode(), e.getResponseBodyAsString());
             throw new RuntimeException("Groq speech transcription failed: " + e.getStatusCode(), e);
         } catch (Exception e) {
             log.warn("Groq speech transcription failed: {}", e.getMessage());
             throw new RuntimeException("Groq speech transcription failed", e);
+        }
+    }
+
+    /**
+     * The same audio, transcribed with nothing forced.
+     *
+     * <p>The main request pins the language to English and hands Whisper the learner's own
+     * English words as a prompt. Both are right for a learner speaking English, and both
+     * are exactly what turns a Turkish sentence into confident English nonsense: on a
+     * device, "Bugün hava çok güzel, dışarı çıkalım" came back as "No, so, so, name me."
+     * with an avg_logprob above the shaky line, went to the tutor, and was corrected --
+     * "name me" -> "call me" -- for something the learner never said. A pinned language
+     * cannot report that the audio was not in it. Only an unpinned pass can.
+     *
+     * <p>No language and no prompt, deliberately: either would pull the detection toward
+     * English. Returns the raw payload, or null on any failure -- a detection that failed
+     * is not evidence of anything, and the transcript proceeds exactly as it did before
+     * this existed.
+     */
+    Map<String, Object> detectSpokenLanguage(byte[] audioBytes, String safeFilename, String contentType) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(apiKey);
+            headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+            body.add("model", model);
+            body.add("temperature", "0");
+            body.add("response_format", "verbose_json");
+
+            HttpHeaders fileHeaders = new HttpHeaders();
+            fileHeaders.setContentType(resolveMediaType(contentType, safeFilename));
+            body.add("file", new HttpEntity<>(new NamedByteArrayResource(audioBytes, safeFilename), fileHeaders));
+
+            ResponseEntity<String> response = restTemplate.postForEntity(
+                    transcriptionUrl, new HttpEntity<>(body, headers), String.class);
+            return objectMapper.readValue(response.getBody(), new TypeReference<Map<String, Object>>() {
+            });
+        } catch (Exception e) {
+            log.warn("Speech language detection failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** What the unpinned pass said, or unknown when there was no pass or it said nothing usable. */
+    private SpokenLanguage awaitDetection(CompletableFuture<Map<String, Object>> detection, String pinnedTranscript) {
+        if (detection == null) {
+            return SpokenLanguage.UNKNOWN;
+        }
+        try {
+            return SpokenLanguage.from(detection.get(detectionWaitMillis, TimeUnit.MILLISECONDS), pinnedTranscript);
+        } catch (TimeoutException e) {
+            log.warn("Speech language detection did not answer within {} ms; proceeding without it", detectionWaitMillis);
+            detection.cancel(true);
+            return SpokenLanguage.UNKNOWN;
+        } catch (Exception e) {
+            log.warn("Speech language detection unavailable: {}", e.getMessage());
+            return SpokenLanguage.UNKNOWN;
         }
     }
 

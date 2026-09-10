@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -384,6 +385,165 @@ class GroqSpeechToTextServiceTest {
                 java.util.List.of("agree", "married", "teacher", "weekend"));
 
         assertEquals("", result.text());
+    }
+
+    /** Stubs both passes, telling them apart by whether the request pins a language. */
+    private void stubBothPasses(String pinnedJson, String unpinnedJson) {
+        when(restTemplate.postForEntity(eq("https://groq.test/audio/transcriptions"),
+                org.mockito.ArgumentMatchers.any(HttpEntity.class),
+                eq(String.class)))
+                .thenAnswer(invocation -> {
+                    HttpEntity<?> request = invocation.getArgument(1);
+                    boolean pinned = multipartBody(request).containsKey("language");
+                    return new ResponseEntity<>(pinned ? pinnedJson : unpinnedJson, HttpStatus.OK);
+                });
+    }
+
+    /**
+     * A sentence in the wrong language is held for a second look.
+     *
+     * <p>Seen on a device: a Turkish sentence, spoken to a transcriber pinned to English,
+     * came back as "No, so, so, name me." with a confident avg_logprob, went straight to
+     * the tutor, and was corrected -- "name me" -> "call me" -- for something the learner
+     * never said. The confidence number cannot see this: the model is sure of its English.
+     * Only a pass with nothing pinned can report what the audio actually was.
+     */
+    @Test
+    void transcribeShouldHoldATranscriptWhoseAudioWasNotEnglish() {
+        ReflectionTestUtils.setField(service, "detectLanguage", true);
+        ReflectionTestUtils.setField(service, "prompt", "");
+        stubBothPasses(
+                "{\"text\":\"No, so, so, name me.\",\"segments\":[{\"no_speech_prob\":0.02,\"avg_logprob\":-0.35}]}",
+                "{\"text\":\"Bugün hava çok güzel, dışarı çıkalım.\",\"language\":\"turkish\"}");
+
+        GroqSpeechToTextService.TranscriptionResult result = service.transcribe(
+                new byte[]{1}, "a.wav", "audio/wav", "en_US");
+
+        assertEquals("No, so, so, name me.", result.text(),
+                "The English transcript is what the learner is shown; the verdict is about whether to send it");
+        assertTrue(result.otherLanguage());
+        assertEquals("turkish", result.detectedLanguage());
+        assertTrue(result.lowConfidence(), "The one flag the shipped app reads has to carry it");
+        assertEquals(-0.35, result.avgLogprob(), "The number stays the transcriber's own");
+    }
+
+    @Test
+    void transcribeShouldNotHoldEnglishThatMerelySoundsForeign() {
+        // -0.6 is an accent, which is most of this app's audience. That line does not move.
+        ReflectionTestUtils.setField(service, "detectLanguage", true);
+        stubBothPasses(
+                "{\"text\":\"I am agree with you.\",\"segments\":[{\"no_speech_prob\":0.02,\"avg_logprob\":-0.6}]}",
+                "{\"text\":\"I am agree with you.\",\"language\":\"english\"}");
+
+        GroqSpeechToTextService.TranscriptionResult result = service.transcribe(
+                new byte[]{1}, "a.wav", "audio/wav", "en_US");
+
+        assertFalse(result.otherLanguage());
+        assertEquals("english", result.detectedLanguage());
+        assertFalse(result.lowConfidence());
+    }
+
+    @Test
+    void transcribeShouldReadTheScriptWhenTheProviderNamesNoLanguage() {
+        // Groq's documented verbose_json example carries no language field. If it really
+        // does not, the letters have to carry the verdict, or the feature silently does
+        // nothing -- which is how the silence check spent a release.
+        ReflectionTestUtils.setField(service, "detectLanguage", true);
+        stubBothPasses(
+                "{\"text\":\"No, so, so, name me.\"}",
+                "{\"text\":\"Hayır, şöyle böyle, bana ad ver.\"}");
+
+        GroqSpeechToTextService.TranscriptionResult result = service.transcribe(
+                new byte[]{1}, "a.wav", "audio/wav", "en_US");
+
+        assertTrue(result.otherLanguage());
+        assertEquals("non-english-script", result.detectedLanguage());
+        assertTrue(result.lowConfidence());
+    }
+
+    @Test
+    void transcribeShouldNotGuessFromAnUnpinnedPassThatIsPlainAscii() {
+        ReflectionTestUtils.setField(service, "detectLanguage", true);
+        stubBothPasses("{\"text\":\"I want some coffee.\"}", "{\"text\":\"I want some coffee.\"}");
+
+        GroqSpeechToTextService.TranscriptionResult result = service.transcribe(
+                new byte[]{1}, "a.wav", "audio/wav", "en_US");
+
+        assertFalse(result.otherLanguage());
+        assertNull(result.detectedLanguage());
+        assertFalse(result.lowConfidence());
+    }
+
+    @Test
+    void transcribeShouldNeverWarnBecauseDetectionFailed() {
+        // The transcript the learner is waiting on is not hostage to the check, and a check
+        // that failed is not evidence of anything.
+        ReflectionTestUtils.setField(service, "detectLanguage", true);
+        when(restTemplate.postForEntity(eq("https://groq.test/audio/transcriptions"),
+                org.mockito.ArgumentMatchers.any(HttpEntity.class),
+                eq(String.class)))
+                .thenAnswer(invocation -> {
+                    HttpEntity<?> request = invocation.getArgument(1);
+                    if (!multipartBody(request).containsKey("language")) {
+                        throw new HttpClientErrorException(HttpStatus.TOO_MANY_REQUESTS);
+                    }
+                    return new ResponseEntity<>("{\"text\":\"I want some coffee.\"}", HttpStatus.OK);
+                });
+
+        GroqSpeechToTextService.TranscriptionResult result = service.transcribe(
+                new byte[]{1}, "a.wav", "audio/wav", "en_US");
+
+        assertEquals("I want some coffee.", result.text());
+        assertFalse(result.otherLanguage());
+        assertFalse(result.lowConfidence());
+    }
+
+    @Test
+    void theUnpinnedPassCarriesNoLanguageAndNoPrompt() {
+        // Either would pull the detection toward English, which is the one answer it must
+        // be free to disagree with.
+        ReflectionTestUtils.setField(service, "detectLanguage", true);
+        ReflectionTestUtils.setField(service, "prompt", "");
+        stubBothPasses("{\"text\":\"I agree.\"}", "{\"text\":\"I agree.\",\"language\":\"english\"}");
+
+        service.transcribe(new byte[]{1}, "a.wav", "audio/wav", "en_US",
+                java.util.List.of("agree", "married"));
+
+        ArgumentCaptor<HttpEntity> entityCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate, times(2)).postForEntity(
+                eq("https://groq.test/audio/transcriptions"), entityCaptor.capture(), eq(String.class));
+        MultiValueMap<String, Object> pinned = null;
+        MultiValueMap<String, Object> unpinned = null;
+        for (HttpEntity<?> request : entityCaptor.getAllValues()) {
+            MultiValueMap<String, Object> body = multipartBody(request);
+            if (body.containsKey("language")) {
+                pinned = body;
+            } else {
+                unpinned = body;
+            }
+        }
+        assertEquals("en", pinned.getFirst("language"));
+        assertTrue(String.valueOf(pinned.getFirst("prompt")).contains("agree"),
+                "The main pass keeps the learner's own words");
+        assertNull(unpinned.getFirst("language"));
+        assertNull(unpinned.getFirst("prompt"));
+        assertEquals("verbose_json", unpinned.getFirst("response_format"));
+    }
+
+    @Test
+    void aDiscardedTranscriptIsNotHeldForItsLanguageEither() {
+        // There is nothing to hold; the silence path already handled it.
+        ReflectionTestUtils.setField(service, "detectLanguage", true);
+        stubBothPasses(
+                "{\"text\":\"Thank you.\",\"segments\":[{\"no_speech_prob\":0.94,\"avg_logprob\":-1.7}]}",
+                "{\"text\":\"Teşekkürler.\",\"language\":\"turkish\"}");
+
+        GroqSpeechToTextService.TranscriptionResult result = service.transcribe(
+                new byte[]{1}, "a.wav", "audio/wav", "en_US");
+
+        assertEquals("", result.text());
+        assertFalse(result.otherLanguage());
+        assertFalse(result.lowConfidence());
     }
 
     private MultiValueMap<String, Object> capturedBody() {

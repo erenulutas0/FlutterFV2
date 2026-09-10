@@ -1868,6 +1868,16 @@ public class ChatbotController {
             if (transcription.avgLogprob() != null) {
                 result.put("avgLogprob", transcription.avgLogprob());
             }
+            // Positive evidence that the audio was not English at all -- a Turkish sentence
+            // forced through an English transcriber comes back as confident nonsense, which
+            // the confidence number cannot see. The service has already folded it into
+            // lowConfidence, so the shipped app asks before sending; it travels separately
+            // so a later client can say why it is asking. Same wire rules as above: the
+            // boolean is always present, the name only when the provider gave one.
+            result.put("otherLanguage", transcription.otherLanguage());
+            if (transcription.detectedLanguage() != null) {
+                result.put("detectedLanguage", transcription.detectedLanguage());
+            }
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             log.error("Failed to transcribe speech for userId={}", userId, e);
