@@ -100,21 +100,29 @@ public class GroqSpeechToTextService {
         static final SpokenLanguage UNKNOWN = new SpokenLanguage(false, null);
 
         static SpokenLanguage from(Map<String, Object> payload, String pinnedTranscript) {
+            // The transcript about to be sent is supposed to be English. If it carries
+            // letters English does not use, the pin did not hold -- on a device, a request
+            // pinned to English came back "Selam nasılsın?" -- and that is evidence on its
+            // own, with or without a second pass to agree.
+            boolean pinnedIsForeign = hasLettersEnglishLacks(pinnedTranscript);
             if (payload == null) {
-                return UNKNOWN;
+                return pinnedIsForeign ? new SpokenLanguage(true, "non-english-script") : UNKNOWN;
             }
             Object named = payload.get("language");
             if (named != null && !named.toString().isBlank()) {
                 String language = named.toString().trim().toLowerCase(Locale.ROOT);
-                return new SpokenLanguage(!isEnglish(language), language);
+                return new SpokenLanguage(pinnedIsForeign || !isEnglish(language), language);
             }
             // No language field. Groq's documentation shows none in its verbose_json
             // example, so this cannot be the only path or the feature silently does
             // nothing -- the mistake the silence check spent a release making. A free
             // transcript that carries letters English does not use, where the pinned one
             // does not, was not English: ç ğ ı ö ş ü, ä ß, é ñ, and every non-Latin script.
+            // The free pass's letters count too. This used to require the pinned transcript
+            // to be clean as well, which is exactly backwards: with both in Turkish it said
+            // nothing at all.
             String free = payload.get("text") == null ? "" : payload.get("text").toString();
-            if (hasLettersEnglishLacks(free) && !hasLettersEnglishLacks(pinnedTranscript)) {
+            if (pinnedIsForeign || hasLettersEnglishLacks(free)) {
                 return new SpokenLanguage(true, "non-english-script");
             }
             return UNKNOWN;
@@ -244,7 +252,10 @@ public class GroqSpeechToTextService {
 
         // Started before the transcription and read after it, so on the path the learner
         // is waiting on it costs nothing; see detectSpokenLanguage for why it exists.
-        CompletableFuture<Map<String, Object>> detection = detectLanguage
+        // Only when the learner is practising English. Every rule below is "is this
+        // English?", which is the wrong question for a service configured for another
+        // language -- where a Turkish transcript is the expected answer, not a warning.
+        CompletableFuture<Map<String, Object>> detection = detectLanguage && "en".equals(selectedLanguage)
                 ? CompletableFuture.supplyAsync(
                         () -> detectSpokenLanguage(audioBytes, safeFilename, contentType),
                         detectionExecutor)
@@ -375,16 +386,21 @@ public class GroqSpeechToTextService {
         if (detection == null) {
             return SpokenLanguage.UNKNOWN;
         }
+        // A pass that failed or ran late says nothing -- but the pinned transcript still
+        // can, so it is judged either way.
+        Map<String, Object> payload = null;
         try {
-            return SpokenLanguage.from(detection.get(detectionWaitMillis, TimeUnit.MILLISECONDS), pinnedTranscript);
+            payload = detection.get(detectionWaitMillis, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             log.warn("Speech language detection did not answer within {} ms; proceeding without it", detectionWaitMillis);
             detection.cancel(true);
-            return SpokenLanguage.UNKNOWN;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Speech language detection interrupted");
         } catch (Exception e) {
             log.warn("Speech language detection unavailable: {}", e.getMessage());
-            return SpokenLanguage.UNKNOWN;
         }
+        return SpokenLanguage.from(payload, pinnedTranscript);
     }
 
     /**

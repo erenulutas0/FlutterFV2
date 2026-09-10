@@ -546,6 +546,70 @@ class GroqSpeechToTextServiceTest {
         assertFalse(result.lowConfidence());
     }
 
+    /**
+     * The pin not holding is itself the evidence.
+     *
+     * <p>On the device, a Turkish sentence sent to a request pinned to English came back as
+     * "Selam nasılsın?". The fallback only looked for foreign letters in the free pass when
+     * the pinned one had none, so with both in Turkish it said nothing at all.
+     */
+    @Test
+    void aPinnedTranscriptInAnotherLanguageIsHeldEvenWhenBothPassesAgree() {
+        ReflectionTestUtils.setField(service, "detectLanguage", true);
+        stubBothPasses("{\"text\":\"Selam nasılsın?\"}", "{\"text\":\"Selam nasılsın?\"}");
+
+        GroqSpeechToTextService.TranscriptionResult result = service.transcribe(
+                new byte[]{1}, "a.wav", "audio/wav", "en_US");
+
+        assertEquals("Selam nasılsın?", result.text());
+        assertTrue(result.otherLanguage());
+        assertTrue(result.lowConfidence());
+    }
+
+    @Test
+    void aPinnedTranscriptInAnotherLanguageIsHeldEvenWhenTheSecondPassFails() {
+        ReflectionTestUtils.setField(service, "detectLanguage", true);
+        when(restTemplate.postForEntity(eq("https://groq.test/audio/transcriptions"),
+                org.mockito.ArgumentMatchers.any(HttpEntity.class),
+                eq(String.class)))
+                .thenAnswer(invocation -> {
+                    HttpEntity<?> request = invocation.getArgument(1);
+                    if (!multipartBody(request).containsKey("language")) {
+                        throw new HttpClientErrorException(HttpStatus.TOO_MANY_REQUESTS);
+                    }
+                    return new ResponseEntity<>("{\"text\":\"Selam nasılsın?\"}", HttpStatus.OK);
+                });
+
+        GroqSpeechToTextService.TranscriptionResult result = service.transcribe(
+                new byte[]{1}, "a.wav", "audio/wav", "en_US");
+
+        assertTrue(result.otherLanguage());
+        assertTrue(result.lowConfidence());
+    }
+
+    @Test
+    void aServiceConfiguredForAnotherLanguageIsNeverHeldForSpeakingIt() {
+        // Every rule in the check is "is this English?". Asked of a service configured for
+        // Turkish, a Turkish transcript is the right answer, not a warning -- and no second
+        // pass is spent asking.
+        ReflectionTestUtils.setField(service, "detectLanguage", true);
+        ReflectionTestUtils.setField(service, "language", "tr");
+        when(restTemplate.postForEntity(eq("https://groq.test/audio/transcriptions"),
+                org.mockito.ArgumentMatchers.any(HttpEntity.class),
+                eq(String.class)))
+                .thenReturn(new ResponseEntity<>("{\"text\":\"Selam nasılsın?\"}", HttpStatus.OK));
+
+        GroqSpeechToTextService.TranscriptionResult result = service.transcribe(
+                new byte[]{1}, "a.wav", "audio/wav", "tr_TR");
+
+        assertFalse(result.otherLanguage());
+        assertFalse(result.lowConfidence());
+        verify(restTemplate, times(1)).postForEntity(
+                eq("https://groq.test/audio/transcriptions"),
+                org.mockito.ArgumentMatchers.any(HttpEntity.class),
+                eq(String.class));
+    }
+
     private MultiValueMap<String, Object> capturedBody() {
         ArgumentCaptor<HttpEntity> entityCaptor = ArgumentCaptor.forClass(HttpEntity.class);
         verify(restTemplate).postForEntity(
