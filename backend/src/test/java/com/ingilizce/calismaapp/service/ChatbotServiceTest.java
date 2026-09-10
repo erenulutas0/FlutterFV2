@@ -159,6 +159,45 @@ class ChatbotServiceTest {
     }
 
     @Test
+    void chatTurn_ShouldDropALineTheWholeSentenceContradicts() {
+        // The third device run: "more simpler -> simpler" under a sentence that said "more
+        // simply". The card leads with the sentence, and the sentence already fixes what the
+        // line would have, so the line that disagrees with it is the one that goes.
+        when(aiCompletionProvider.chatCompletionWithUsage(anyList(), anyBoolean(), any(), any(), nullable(String.class)))
+                .thenReturn(AiCompletionProvider.CompletionResult.of(
+                        "Sure!\n"
+                                + "[[FIX]] complicating more -> more complicated || n1\n"
+                                + "[[FIX]] what is the milk and latte -> what milk and latte are || n2\n"
+                                + "[[FIX]] more simpler -> simpler || n3\n"
+                                + "[[SENTENCE]] This is more complicated, why don't you explain what milk and latte are more simply.",
+                        1, 1, 2));
+
+        ChatbotService.ChatTurn turn = chatbotService.chatTurn(
+                "This is complicating more, why don't you explain what is the milk and latte more simpler",
+                null, null, null,
+                LearningLanguageProfile.of("Turkish", "English", "Turkish", "B2", "Speaking"), null);
+
+        assertEquals(2, turn.corrections().size());
+        assertEquals("more complicated", turn.correction().better());
+        assertEquals("what milk and latte are", turn.corrections().get(1).better());
+        assertEquals("This is more complicated, why don't you explain what milk and latte are more simply.",
+                turn.correctedSentence());
+    }
+
+    @Test
+    void chatTurn_ShouldDropAWholeSentenceThatAgreesWithNoLine() {
+        when(aiCompletionProvider.chatCompletionWithUsage(anyList(), anyBoolean(), any(), any(), nullable(String.class)))
+                .thenReturn(AiCompletionProvider.CompletionResult.of(
+                        "Nice!\n[[FIX]] I go -> I went\n[[SENTENCE]] I have gone home.", 1, 1, 2));
+
+        ChatbotService.ChatTurn turn = chatbotService.chatTurn("I go home", null, null, null,
+                LearningLanguageProfile.defaultProfile(), null);
+
+        assertEquals("I went", turn.correction().better(), "the line stays; only the sentence goes");
+        assertNull(turn.correctedSentence());
+    }
+
+    @Test
     void chatTurn_ShouldDropAWholeSentenceThatChangesNothing() {
         // Their own words handed back as "the right way to say it" would tell them they were
         // wrong and show them nothing.

@@ -219,4 +219,29 @@ class ChatbotWholeSentenceTest {
         assertTrue(text.contains("\"where is the station -> where the station is\""));
         assertTrue(text.contains("\"why don't you\"\n  is never swapped for \"could you\""));
     }
+
+    @Test
+    @DisplayName("the lines are copied from the sentence, so the two never disagree")
+    void thePromptAsksForAgreement() throws Exception {
+        String text = fixInstructions("B2");
+
+        assertTrue(text.contains("Work out the whole corrected message before you write any line"));
+        assertTrue(text.contains("The lines and the last line never disagree"));
+    }
+
+    @Test
+    @DisplayName("a line's corrected words are found in the sentence, word for word")
+    void containsPhrase() {
+        String sentence =
+                "This is more complicated, why don't you explain what milk and latte are more simply.";
+
+        assertTrue(ChatbotService.containsPhrase(sentence, "what milk and latte are"));
+        assertTrue(ChatbotService.containsPhrase(sentence, "More complicated"));
+        assertTrue(ChatbotService.containsPhrase(sentence, "why don\u2019t you"));
+        assertFalse(ChatbotService.containsPhrase(sentence, "simpler"),
+                "the third device run: the line said simpler, the sentence more simply");
+        assertFalse(ChatbotService.containsPhrase(sentence, "latte are more simple"));
+        assertFalse(ChatbotService.containsPhrase(sentence, "mor"), "whole words, not letters");
+        assertFalse(ChatbotService.containsPhrase(sentence, ""));
+    }
 }

@@ -424,6 +424,9 @@ HOW TO OFFER A CORRECTION:
   whole-message line. Never trade correct words for ones you like better: "why don't you"
   is never swapped for "could you", nor "big" for "large". The card shows every change as
   a mistake the learner made, so a change that was not a mistake teaches them something false.
+- Work out the whole corrected message before you write any line, then copy each line's
+  corrected words from it exactly. The lines and the last line never disagree: a line that
+  says "I'm bored" sits over a whole message that says "I'm bored", never "I feel bored".
 - The correction frequency above governs how much your spoken reply dwells on mistakes.
   It does not govern this line or the ones beside it. They become a quiet card the
   learner reads alone, so add them for every clear mistake at every level, A1 and A2 included,
@@ -521,6 +524,24 @@ HOW TO OFFER A CORRECTION:
       logger.info("Dropping a corrected sentence that left part of the message out: '{}'",
           correctedSentence);
       correctedSentence = null;
+    }
+    // And only over lines it agrees with. See containsPhrase.
+    if (correctedSentence != null) {
+      List<Correction> agreeing = new ArrayList<>();
+      for (Correction correction : corrections) {
+        if (containsPhrase(correctedSentence, correction.better())) {
+          agreeing.add(correction);
+        }
+      }
+      if (agreeing.isEmpty()) {
+        logger.info("Dropping a corrected sentence that agrees with none of its lines: '{}'",
+            correctedSentence);
+        correctedSentence = null;
+      } else if (agreeing.size() < corrections.size()) {
+        logger.info("Dropping {} correction line(s) the corrected sentence does not carry",
+            corrections.size() - agreeing.size());
+        corrections = agreeing;
+      }
     }
     String reply = stripCorrection(result.content());
 
@@ -767,6 +788,21 @@ HOW TO OFFER A CORRECTION:
       }
     }
     return words;
+  }
+
+  /**
+   * Whether [phrase] appears in [sentence] word for word, ignoring case and punctuation.
+   *
+   * <p>The corrected words of every line must be in the whole sentence above them. On the
+   * third device run a line said "more simpler" -> "simpler" under a sentence that said
+   * "more simply": two right answers on one card, and the learner left to pick. When a line
+   * disagrees, the line goes and the sentence stays -- the card leads with the sentence, and
+   * it already fixes what the line would have. When no line agrees, the sentence goes.
+   */
+  static boolean containsPhrase(String sentence, String phrase) {
+    String wanted = String.join(" ", wordList(phrase));
+    return !wanted.isEmpty()
+        && (" " + String.join(" ", wordList(sentence)) + " ").contains(" " + wanted + " ");
   }
 
   /** Whether two texts are the same words, ignoring case, punctuation and spacing. */
