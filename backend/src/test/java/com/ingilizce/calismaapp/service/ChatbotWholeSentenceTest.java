@@ -203,4 +203,20 @@ class ChatbotWholeSentenceTest {
         assertTrue(ChatbotService.keepsTheRestOf("I went home.", "I go home",
                 List.of(new ChatbotService.Correction("I go", "I went"))));
     }
+
+    @Test
+    @DisplayName("a line strikes through the mistake, not the clause around it")
+    void linesAreNarrow() throws Exception {
+        // The second device run struck through the learner's whole second clause -- "why
+        // don't you explain what is steamed milk and latte more simpler?" -- and wrote "could
+        // you explain steamed milk and latte more simply?". Two mistakes hidden in one line,
+        // one of them dropped rather than fixed, and a correct "why don't you" traded for a
+        // phrase the model liked better, shown to the learner as their mistake.
+        String text = fixInstructions("B2");
+
+        assertTrue(text.contains("never a whole clause or question"));
+        assertTrue(text.contains("Two mistakes in one\n  clause are two lines"));
+        assertTrue(text.contains("\"where is the station -> where the station is\""));
+        assertTrue(text.contains("\"why don't you\"\n  is never swapped for \"could you\""));
+    }
 }
