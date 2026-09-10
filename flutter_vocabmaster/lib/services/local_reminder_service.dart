@@ -183,6 +183,19 @@ class LocalReminderService {
       if (key == streakGuardKey) await cancelStreakGuardReminder();
       if (key == subscriptionAlertKey) await cancelTrialExpiryReminder();
       if (key == wordRecallKey) await cancelWordRecallReminder();
+      return;
+    }
+    // Turning a reminder on arms it now. This only ever stored the switch, so the
+    // reminder a learner had just asked for did not exist until their next practice
+    // happened to schedule it: the row said on and nothing was queued. Word recall
+    // carries a word from the deck, which this service does not have, so the settings
+    // screen asks the provider for that one.
+    //
+    // Not awaited. Both settings screens call this for every device switch before they
+    // save the preferences to the server, so awaiting put that save behind a reminder
+    // being scheduled. _arm keeps its own failures, so there is nothing to wait for.
+    if (key == streakGuardKey) {
+      unawaited(_arm('streak guard', scheduleStreakGuardReminder));
     }
   }
 
@@ -239,10 +252,13 @@ class LocalReminderService {
   }
 
   Future<void> refreshScheduledReminders() async {
-    if (!await isDailyReminderEnabled()) {
-      return;
+    if (await isDailyReminderEnabled()) {
+      await _arm('daily', scheduleDailyReminder);
     }
-    await _arm('daily', scheduleDailyReminder);
+    // Outside the daily switch. The streak guard has a switch of its own and checks it
+    // itself; behind this `if` it answered to the daily one as well, so a learner who
+    // turned the evening reminder off lost the streak guard with it -- the one reminder
+    // somebody who wants fewer notifications is most likely to want to keep.
     await _arm('streak guard', scheduleStreakGuardReminder);
   }
 

@@ -71,6 +71,62 @@ void main() {
     expect(await service.isWordRecallEnabled(), isTrue);
   });
 
+  group('a reminder switched on is armed, not only stored', () {
+    // The plugin calls, recorded, so these assert what reaches the OS rather than
+    // what was written to preferences -- which is where the old behaviour looked fine.
+    late List<String> calls;
+
+    setUp(() {
+      calls = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('dexterous.com/flutter/local_notifications'),
+        (call) async {
+          calls.add(call.method);
+          return null;
+        },
+      );
+    });
+
+    String today() => DateTime.now().toIso8601String().split('T')[0];
+
+    /// Arming runs after the switch is saved, not inside it -- so wait for the call
+    /// to reach the plugin rather than expecting it the moment the save returns.
+    Future<void> untilCalled(String method) async {
+      for (int i = 0; i < 40 && !calls.contains(method); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+    }
+
+    test('turning the streak guard on schedules it', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'current_streak': 3,
+        'last_activity_date': today(),
+      });
+
+      await service.setReminderEnabled(LocalReminderService.streakGuardKey, true);
+      await untilCalled('zonedSchedule');
+
+      expect(calls, contains('zonedSchedule'),
+          reason: 'the switch said on and nothing was queued');
+    });
+
+    test('the streak guard does not answer to the daily switch', () async {
+      // Behind the daily `if`, turning the evening reminder off silently took the
+      // streak guard with it, despite the guard having -- and showing -- its own row.
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        LocalReminderService.dailyReminderKey: false,
+        'current_streak': 3,
+        'last_activity_date': today(),
+      });
+
+      await service.refreshScheduledReminders();
+
+      expect(calls, contains('zonedSchedule'),
+          reason: 'the streak guard was not armed while the daily reminder was off');
+    });
+  });
+
   test('an explicit off survives, it is not re-defaulted to on', () async {
     // The defaults are opt-out, so the stored false has to win over the default true or
     // the user cannot actually turn anything off.

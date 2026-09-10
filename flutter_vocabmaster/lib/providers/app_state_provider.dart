@@ -559,6 +559,22 @@ class AppStateProvider extends ChangeNotifier {
         currentStreak = _calculateStreakFromWords(_allWords);
         if (currentStreak > 0) {
           await prefs.setInt('current_streak', currentStreak);
+          // The date as well as the count. Writing only the count left
+          // last_activity_date empty, or weeks stale, on a phone whose words came in
+          // by a path that never credited the day -- and the streak guard reads the
+          // date: with none it cancels itself, so the reminder whose whole job is to
+          // protect a streak was never armed for a learner who had one. Reminders were
+          // already armed before this ran (LocalReminderService.initialize is called
+          // from main), so the guard is asked again here rather than at next launch.
+          final String? lastDay = lastStreakDayFromWords(_allWords);
+          if (lastDay != null && lastDay != lastActivityDate) {
+            await prefs.setString('last_activity_date', lastDay);
+            try {
+              await LocalReminderService().scheduleStreakGuardReminder();
+            } catch (e) {
+              debugPrint('Streak reminder scheduling skipped: $e');
+            }
+          }
         }
       }
 
@@ -726,6 +742,24 @@ class AppStateProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint('Error seeding base XP: $e');
     }
+  }
+
+  /// The last day of the streak [_calculateStreakFromWords] counts: today if a word
+  /// was learned today, otherwise yesterday if one was, otherwise null.
+  ///
+  /// The same walk on the same clock, so the date written beside a rebuilt count
+  /// always belongs to that count.
+  @visibleForTesting
+  static String? lastStreakDayFromWords(List<Word> words, {DateTime? now}) {
+    final Set<String> days = words
+        .map((Word w) => w.learnedDate.toIso8601String().split('T')[0])
+        .toSet();
+    final DateTime clock = now ?? DateTime.now();
+    final String today = clock.toIso8601String().split('T')[0];
+    if (days.contains(today)) return today;
+    final String yesterday =
+        clock.subtract(const Duration(days: 1)).toIso8601String().split('T')[0];
+    return days.contains(yesterday) ? yesterday : null;
   }
 
   int _calculateStreakFromWords(List<Word> words) {
@@ -1065,12 +1099,32 @@ class AppStateProvider extends ChangeNotifier {
     }
 
     final index = _allWords.indexWhere((w) => w.id == word.id);
-    if (index == -1) {
+    final bool isNew = index == -1;
+    if (isNew) {
       _allWords.insert(0, word);
     } else {
       _allWords[index] = word;
     }
     notifyListeners();
+
+    // A word kept from a book, a conversation or the dictionary is learning in exactly
+    // the sense a word typed into the add box is, and that path has always credited the
+    // day. This one did not. On a phone whose words arrived this way last_activity_date
+    // was never written: the streak on screen survived, rebuilt from word dates, but the
+    // streak guard reads the date, took its "no activity" branch and cancelled itself, and
+    // word recall -- armed only by the day's first credited activity -- never armed at all.
+    // Only for a new word. Re-adopting one to record another meaning is an edit.
+    //
+    // Not awaited, and its failures kept to itself: it is bookkeeping about the save,
+    // not part of it. The dictionary page awaits this method before telling the learner
+    // the word was added, so awaiting here put that confirmation behind a reminder being
+    // scheduled, and a streak update that threw would have reported a word already in
+    // the deck as a failed save.
+    if (isNew) {
+      unawaited(creditLearningActivity().catchError((Object e) {
+        debugPrint('AppStateProvider: adopted word not credited to the day: $e');
+      }));
+    }
   }
 
   /// Word Galaxy ve benzeri akislardan SRS review submit et.

@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../../providers/app_state_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/local_reminder_service.dart';
 import '../../services/push_token_service.dart';
@@ -188,6 +190,16 @@ class _NfNotificationsPageState extends State<NfNotificationsPage> {
       final String? localKey = _localKeys[pref];
       if (localKey != null) {
         await _reminders.setReminderEnabled(localKey, _values[pref] ?? value);
+      }
+      // Word recall is the one switch the reminder service cannot arm by itself: the
+      // notification carries a word from the deck, and the deck lives in the provider.
+      // Without this it came back on and stayed silent until the next practice.
+      if (pref == _Pref.wordRecall && (_values[pref] ?? value) && mounted) {
+        try {
+          unawaited(context.read<AppStateProvider>().refreshWordRecallReminder());
+        } catch (e) {
+          debugPrint('NfNotificationsPage: word recall not re-armed ($e)');
+        }
       }
 
       final Map<String, dynamic> saved = await _apiService
