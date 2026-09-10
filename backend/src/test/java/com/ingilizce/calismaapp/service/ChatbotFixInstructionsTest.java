@@ -172,6 +172,23 @@ class ChatbotFixInstructionsTest {
     }
 
     @Test
+    @DisplayName("and a translated label is still a label")
+    void aLabelIsALabelInAnyLanguage() throws Exception {
+        // The English list above went in and the same sentence came back, on a device,
+        // with "\"had like\" doğru bir ifade değil, \"would like\" kullanılır" -- "not a
+        // correct expression", in Turkish. The note is written in the learner's language
+        // and the list was English, so the model translated the label and walked past.
+        // A longer list loses the same way in the next language; a test the model can
+        // run on its own note does not: "'X' is not correct, use 'Y'" is true for any X
+        // and Y, so it says nothing about these two.
+        String text = fixInstructions(learner("Turkish", "B2"));
+
+        assertThat(text).contains("translating them into the note's language");
+        assertThat(text).contains("any other two");
+        assertThat(text).contains("what the words DO");
+    }
+
+    @Test
     @DisplayName("a mistake whose words mean nothing is demonstrated too")
     void aFormMistakeIsDemonstrated() throws Exception {
         // "I am boring" means something -- the wrong thing -- and its note says what. "I had

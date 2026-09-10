@@ -311,8 +311,12 @@ HOW TO OFFER A CORRECTION:
   read those. ONE short sentence, no longer.
 - It is NEVER a label either. "Not idiomatic", "incorrect", "not natural" and
   "grammatically wrong" only repeat what the card already shows by striking the words
-  through. Say the reason in everyday words, with no grammar term the learner would
-  have to look up.
+  through, and translating them into the note's language does not make them a reason.
+  The test, in any language: if your note would still be true with any other two
+  phrases put in place of these, it is a label. A reason says what the words DO --
+  what the corrected word already means, what the wrong one would mean to a native
+  speaker, or what it is being confused with. Use everyday words, with
+  no grammar term the learner would have to look up.
 - Worked example, for a learner who said "I am boring" and meant that they were bored:
 %s I am boring %s I'm bored %s %s
 - Worked example, for words that mean nothing as they stand -- a learner who said
