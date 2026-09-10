@@ -156,8 +156,21 @@ public class ChatbotService {
     }
   }
 
-  /** A reply, and the correction that came back with it. [correction] may be null. */
-  public record ChatTurn(AiCallResult ai, Correction correction) {
+  /**
+   * A reply, and the corrections that came back with it.
+   *
+   * <p>[correction] is the most important one, or null -- the one field every app before
+   * [corrections] reads, so it keeps meaning exactly what it always meant. [corrections] is
+   * every change the card lists, most important first, starting with [correction]; empty
+   * when there is none. [correctedSentence] is the learner's whole message fixed, or null.
+   */
+  public record ChatTurn(AiCallResult ai, Correction correction, List<Correction> corrections,
+      String correctedSentence) {
+
+    /** One correction or none, and no whole sentence: what every caller before them built. */
+    public ChatTurn(AiCallResult ai, Correction correction) {
+      this(ai, correction, correction == null ? List.of() : List.of(correction), null);
+    }
   }
 
   /**
@@ -197,6 +210,20 @@ public class ChatbotService {
    * applied it any more than the server trusts the model.
    */
   private static final int FIX_NOTE_MAX_LENGTH = 160;
+
+  /**
+   * The marker in front of the learner's whole message, corrected.
+   *
+   * <p>A tester at B2 said "This is complicating more. Why don't you explain what is steamed
+   * milk and latte more simpler..." -- five mistakes -- and the card showed one: "more
+   * simpler" -> "simpler". He read that, fairly, as the rest being fine. The card now leads
+   * with the whole sentence fixed and lists the most important changes under it, so a short
+   * list never reads as "only this was wrong".
+   */
+  private static final String SENTENCE_MARKER = "[[SENTENCE]]";
+
+  /** A spoken turn, not a paragraph: anything longer has left the format. */
+  private static final int SENTENCE_MAX_LENGTH = 400;
 
   /**
    * How the model is asked for it.
@@ -310,10 +337,54 @@ public class ChatbotService {
     };
   }
 
+  /**
+   * How many corrections a card may carry at this level.
+   *
+   * <p>One at A1 and A2: below B1 a card that lists three things teaches none of them. More
+   * above, because a card that fixes one thing in a sentence with five mistakes implies the
+   * other four were fine. The whole corrected sentence goes on the card at every level, so
+   * at no level does a short list read as "the rest was right".
+   */
+  static int maxChanges(String level) {
+    if ("A1".equals(level) || "A2".equals(level)) {
+      return 1;
+    }
+    return "B1".equals(level) ? 2 : 3;
+  }
+
+  /**
+   * The worked example: one message with two mistakes, its notes in the learner's language.
+   *
+   * <p>One example rather than two, so it shows the shape of a whole card -- the lines, most
+   * important first, then the sentence -- and not only the shape of one line. Its two
+   * mistakes are the two kinds a note has to handle: words that mean the wrong thing ("I am
+   * boring") and words that mean nothing as they stand ("I am agree"). Below B1 it shows only
+   * the first line, because that is all the learner's card has room for, and says so; the
+   * sentence line still fixes both.
+   */
+  private static String workedExample(String nativeLanguage, int maxChanges) {
+    StringBuilder out = new StringBuilder()
+        .append("- Worked example, for a learner who said \"I am boring and I am agree with you.\"\n")
+        .append("  and meant that they were bored:\n")
+        .append(FIX_MARKER).append(" I am boring ").append(FIX_SEPARATOR).append(" I'm bored ")
+        .append(FIX_NOTE_SEPARATOR).append(' ').append(exampleNote(nativeLanguage)).append('\n');
+    if (maxChanges >= 2) {
+      out.append(FIX_MARKER).append(" I am agree ").append(FIX_SEPARATOR).append(" I agree ")
+          .append(FIX_NOTE_SEPARATOR).append(' ').append(exampleFormNote(nativeLanguage)).append('\n');
+    }
+    out.append(SENTENCE_MARKER).append(" I'm bored and I agree with you.");
+    if (maxChanges < 2) {
+      out.append("\n  Only one line fits at this level, so it is the mistake that changes the meaning;\n")
+          .append("  the last line still fixes both.");
+    }
+    return out.toString();
+  }
+
   private static String fixInstructions(LearningLanguageProfile profile) {
     String nativeLanguage = profile.sourceLanguage();
     String level = profile.englishLevel();
     boolean beginner = "A1".equals(level) || "A2".equals(level);
+    int maxChanges = maxChanges(level);
     String notePolicy = beginner
         ? "- This learner is " + level + ", so the note is REQUIRED on every line you add. At this\n"
             + "  level the two English sentences on their own teach nothing; the note is the only\n"
@@ -324,17 +395,25 @@ public class ChatbotService {
 
 HOW TO OFFER A CORRECTION:
 - Reply naturally first. Never mention corrections, formats or markers inside your reply.
-- Then, if the learner's message had one clear mistake, add a FINAL line of exactly this
-  shape and nothing after it:
+- Then, if the learner's message had mistakes, end with one correction line per mistake,
+  the most important first and never more than %d, each of exactly this shape:
 %s their exact words %s the corrected words %s short note in %s
+- After those lines comes one last line, the learner's whole message the way a native
+  speaker would say it:
+%s the whole message, corrected
+  It keeps their words, their meaning and their tone and changes only what was wrong:
+  their sentence fixed, not a better sentence. It fixes EVERY mistake in the message,
+  including any you had no room to list, because it is how the learner sees that the rest
+  of what they said needed work too. Nothing comes after it.
 - A mistake is anything a native speaker would not say: grammar ("I am agree"), and also
   word choice carried over from another language ("open the light", "married with",
   "explain me", "I am boring" meant as "I'm bored"). The meaning being clear does not
-  make the words correct.
+  make the words correct. Word order counts too ("tell me where is it"), and so does a
+  doubled comparative ("more simpler").
 - The correction frequency above governs how much your spoken reply dwells on mistakes.
-  It does not govern this line. The line becomes a quiet card the learner reads alone,
-  so add it for every clear mistake at every level, A1 and A2 included, even when your
-  reply lets it pass.
+  It does not govern this line or the ones beside it. They become a quiet card the
+  learner reads alone, so add them for every clear mistake at every level, A1 and A2 included,
+  even when your reply lets it pass.
 - The note after %s is written in %s. It is the only %s you ever write: your reply itself
   stays in English, whatever language the learner writes to you in.
 - A good note says WHY the words were wrong, or what they actually mean to a native
@@ -349,21 +428,19 @@ HOW TO OFFER A CORRECTION:
   speaker, or what it is being confused with. Use everyday words, with
   no grammar term the learner would have to look up.
 - %s
-- Worked example, for a learner who said "I am boring" and meant that they were bored:
-%s I am boring %s I'm bored %s %s
-- Worked example, for words that mean nothing as they stand -- a learner who said
-  "I am agree":
-%s I am agree %s I agree %s %s
+%s
 %s
 - Correct only what they actually said. Never invent a mistake to have something to show.
-- One line at most, ever, and nothing after the note.
+- At most %d correction lines, then the whole-message line, and nothing after it.
 """.formatted(
+        maxChanges,
         FIX_MARKER, FIX_SEPARATOR, FIX_NOTE_SEPARATOR, nativeLanguage,
+        SENTENCE_MARKER,
         FIX_NOTE_SEPARATOR, nativeLanguage, nativeLanguage,
         languageAnchor(nativeLanguage),
-        FIX_MARKER, FIX_SEPARATOR, FIX_NOTE_SEPARATOR, exampleNote(nativeLanguage),
-        FIX_MARKER, FIX_SEPARATOR, FIX_NOTE_SEPARATOR, exampleFormNote(nativeLanguage),
-        notePolicy);
+        workedExample(nativeLanguage, maxChanges),
+        notePolicy,
+        maxChanges);
   }
 
   public ChatTurn chatTurn(String message, String scenario, String scenarioContext, Long userId,
@@ -399,11 +476,32 @@ HOW TO OFFER A CORRECTION:
     // answer and no card, which is the exact failure this whole feature exists to
     // end. max_tokens is a ceiling, not a reservation, so the extra costs nothing
     // on the turns that do not need it.
+    //
+    // 560 since the card carries up to three corrections and the learner's whole sentence.
+    // Three lines with notes in the learner's language and a corrected sentence come to
+    // roughly 200 tokens on top of the reply 360 was sized for -- an estimate, and a ceiling
+    // rather than a reservation, so it costs nothing on the turns that need less.
     AiCallResult result = callGroqText(
-        systemPrompt, history, message, 360 + REASONING_TOKEN_ALLOWANCE, "speaking-chat");
+        systemPrompt, history, message, 560 + REASONING_TOKEN_ALLOWANCE, "speaking-chat");
 
-    Correction correction =
-        withoutStrayNote(extractCorrection(result.content()), profile.sourceLanguage());
+    // As many as this level's card holds, most important first, each note checked for
+    // language on its own: one stray note still costs only itself.
+    int cap = maxChanges(profile.englishLevel());
+    List<Correction> corrections = new ArrayList<>();
+    for (Correction found : extractCorrections(result.content())) {
+      if (corrections.size() == cap) {
+        break;
+      }
+      corrections.add(withoutStrayNote(found, profile.sourceLanguage()));
+    }
+    // Only beside a correction -- a card cannot lead with a sentence it does not explain --
+    // and only when it changes something: their own words handed back as "the right way to
+    // say it" would tell them they were wrong and show them nothing.
+    String correctedSentence =
+        corrections.isEmpty() ? null : extractCorrectedSentence(result.content());
+    if (correctedSentence != null && sameWords(correctedSentence, message)) {
+      correctedSentence = null;
+    }
     String reply = stripCorrection(result.content());
 
     // The cleaned reply, not the raw one. Storing the marker would feed it back as an
@@ -417,7 +515,8 @@ HOW TO OFFER A CORRECTION:
 
     AiCallResult cleaned = new AiCallResult(
         reply, result.totalTokens(), result.promptTokens(), result.completionTokens());
-    return new ChatTurn(cleaned, correction);
+    return new ChatTurn(cleaned, corrections.isEmpty() ? null : corrections.get(0),
+        List.copyOf(corrections), correctedSentence);
   }
 
   /**
@@ -475,79 +574,167 @@ HOW TO OFFER A CORRECTION:
     return new Correction(correction.said(), correction.better(), null);
   }
 
-  /** The correction the model appended, or null if it did not append a usable one. */
-  static Correction extractCorrection(String content) {
+  /**
+   * Every correction the model appended, most important first; empty if none is usable.
+   *
+   * <p>Several lines now, one per mistake. A line that does not parse is skipped rather than
+   * costing the others -- the rule it always followed, that a bad marker costs only itself.
+   * The same words corrected twice mean the model revised its own answer, and the later one
+   * stands in the earlier one's place: when there could only be one line, "the last marker
+   * wins" said exactly that, and it is still true of one phrase.
+   *
+   * <p>Found anywhere on a line, not only at the start. Models put the marker after a
+   * space, after a bullet, or on the end of the sentence they just wrote, and a marker this
+   * refuses to read is one stripCorrection still has to delete.
+   */
+  static List<Correction> extractCorrections(String content) {
+    List<Correction> found = new ArrayList<>();
     if (content == null) {
-      return null;
+      return found;
     }
-    // The LAST marker. A model that repeats itself has replaced its own earlier
-    // answer, and taking the first would show the learner something it went on to
-    // think better of.
-    //
-    // Found anywhere on the line, not only at the start. Models put the marker after
-    // a space, after a bullet, or on the end of the sentence they just wrote, and a
-    // marker this method refuses to read is one stripCorrection still has to delete —
-    // otherwise the raw "I go -> I went" is glued onto the reply and read aloud.
-    String[] lines = content.split("\\R");
-    for (int i = lines.length - 1; i >= 0; i--) {
-      int marker = lines[i].indexOf(FIX_MARKER);
+    for (String line : content.split("\\R")) {
+      int marker = line.indexOf(FIX_MARKER);
       if (marker < 0) {
         continue;
       }
-      String body = lines[i].substring(marker + FIX_MARKER.length()).trim();
-      // The note comes off first, so everything below reads exactly the line it read
-      // before notes existed. Split on the FIRST separator: the note is free prose in a
-      // language this method cannot check, and a second "||" inside it belongs to the
-      // note rather than to the format.
-      String note = null;
-      int noteAt = body.indexOf(FIX_NOTE_SEPARATOR);
-      if (noteAt >= 0) {
-        String supplied = body.substring(noteAt + FIX_NOTE_SEPARATOR.length()).trim();
-        body = body.substring(0, noteAt).trim();
-        // An overlong note is dropped, and dropped ALONE. A model asked for one sentence
-        // that answers with a paragraph has stopped following the format, and the first
-        // 160 characters of a paragraph are not an explanation. The correction it came
-        // with is still good, and it is the part the learner came for: a runaway note
-        // must never cost them the fix it was supposed to explain.
-        //
-        // Absent stays absent rather than becoming "", so the wire can tell "nothing to
-        // explain" from "an explanation that says nothing".
-        if (!supplied.isEmpty() && supplied.length() <= FIX_NOTE_MAX_LENGTH) {
-          note = supplied;
+      Correction parsed = parseFixLine(line.substring(marker + FIX_MARKER.length()));
+      if (parsed == null) {
+        continue;
+      }
+      int revised = -1;
+      for (int i = 0; i < found.size(); i++) {
+        if (sameWords(found.get(i).said(), parsed.said())) {
+          revised = i;
+          break;
         }
       }
-      // Exactly one arrow, or nothing. With two there is no way to tell which one
-      // divides the halves: "the sign say A -> B -> the sign says A -> B" is a real
-      // correction of a real sentence, and either split produces a confident, wrong
-      // answer. Everything else here degrades to no correction, and so does this.
-      int at = body.indexOf(FIX_SEPARATOR);
-      if (at <= 0 || body.indexOf(FIX_SEPARATOR, at + FIX_SEPARATOR.length()) >= 0) {
-        return null;
+      if (revised >= 0) {
+        found.set(revised, parsed);
+      } else {
+        found.add(parsed);
       }
-      String said = body.substring(0, at).trim();
-      String better = body.substring(at + FIX_SEPARATOR.length()).trim();
-      // Length caps, because this is model output going straight onto a screen. A
-      // runaway line is a sign the model misunderstood the format, and half a paragraph
-      // in a correction chip is worse than no chip.
-      if (said.isEmpty() || better.isEmpty() || said.length() > 300 || better.length() > 300) {
-        return null;
-      }
-      if (said.equals(better)) {
-        return null;
-      }
-      return new Correction(said, better, note);
     }
-    return null;
+    return found;
   }
 
-  /** The reply with every trace of the marker removed. */
+  /** The most important correction, or null: the one the API has always sent as "correction". */
+  static Correction extractCorrection(String content) {
+    List<Correction> all = extractCorrections(content);
+    return all.isEmpty() ? null : all.get(0);
+  }
+
+  /** One marked line, after its marker; null if it is not a usable correction. */
+  private static Correction parseFixLine(String rawBody) {
+    String body = rawBody;
+    // A whole-sentence marker on the same line belongs to that line's end, not to this
+    // correction's note.
+    int sentenceAt = body.indexOf(SENTENCE_MARKER);
+    if (sentenceAt >= 0) {
+      body = body.substring(0, sentenceAt);
+    }
+    body = body.trim();
+    // The note comes off first, so everything below reads exactly the line it read before
+    // notes existed. Split on the FIRST separator: the note is free prose in a language
+    // this method cannot check, and a second "||" inside it belongs to the note.
+    String note = null;
+    int noteAt = body.indexOf(FIX_NOTE_SEPARATOR);
+    if (noteAt >= 0) {
+      String supplied = body.substring(noteAt + FIX_NOTE_SEPARATOR.length()).trim();
+      body = body.substring(0, noteAt).trim();
+      // An overlong note is dropped, and dropped ALONE: the correction it came with is
+      // still good, and it is the part the learner came for. Absent stays absent rather
+      // than becoming "", so the wire can tell "nothing to explain" from "an explanation
+      // that says nothing".
+      if (!supplied.isEmpty() && supplied.length() <= FIX_NOTE_MAX_LENGTH) {
+        note = supplied;
+      }
+    }
+    // Exactly one arrow, or nothing: with two there is no way to tell which one divides the
+    // halves, and either split produces a confident, wrong answer.
+    int at = body.indexOf(FIX_SEPARATOR);
+    if (at <= 0 || body.indexOf(FIX_SEPARATOR, at + FIX_SEPARATOR.length()) >= 0) {
+      return null;
+    }
+    String said = body.substring(0, at).trim();
+    String better = body.substring(at + FIX_SEPARATOR.length()).trim();
+    // Length caps, because this is model output going straight onto a screen.
+    if (said.isEmpty() || better.isEmpty() || said.length() > 300 || better.length() > 300) {
+      return null;
+    }
+    if (said.equals(better)) {
+      return null;
+    }
+    return new Correction(said, better, note);
+  }
+
+  /**
+   * The learner's whole message as the model corrected it, or null.
+   *
+   * <p>The last one wins, as with a revised correction. Capped, because it goes onto a phone
+   * unedited and a model that has started writing a paragraph has left the format.
+   */
+  static String extractCorrectedSentence(String content) {
+    if (content == null) {
+      return null;
+    }
+    String sentence = null;
+    for (String line : content.split("\\R")) {
+      int marker = line.indexOf(SENTENCE_MARKER);
+      if (marker < 0) {
+        continue;
+      }
+      String text = line.substring(marker + SENTENCE_MARKER.length());
+      int fix = text.indexOf(FIX_MARKER);
+      if (fix >= 0) {
+        text = text.substring(0, fix);
+      }
+      text = text.trim();
+      if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
+        text = text.substring(1, text.length() - 1).trim();
+      }
+      if (!text.isEmpty() && text.length() <= SENTENCE_MAX_LENGTH) {
+        sentence = text;
+      }
+    }
+    return sentence;
+  }
+
+  /** Whether two texts are the same words, ignoring case, punctuation and spacing. */
+  static boolean sameWords(String a, String b) {
+    return a != null && b != null && wordsOf(a).equals(wordsOf(b));
+  }
+
+  private static String wordsOf(String text) {
+    return String.join(" ", text.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}']+")).trim();
+  }
+
+  /** Where the first correction marker on a line starts, of either kind, or -1. */
+  private static int firstMarker(String line) {
+    int fix = line.indexOf(FIX_MARKER);
+    int sentence = line.indexOf(SENTENCE_MARKER);
+    if (fix < 0) {
+      return sentence;
+    }
+    if (sentence < 0) {
+      return fix;
+    }
+    return Math.min(fix, sentence);
+  }
+
+  /**
+   * The reply with every trace of either marker removed.
+   *
+   * <p>The whole-sentence line is the one this matters most for: it is a complete, fluent
+   * English sentence, so left behind it would not look like debris -- it would be read aloud
+   * by the tutor as if she had said it.
+   */
   static String stripCorrection(String content) {
     if (content == null) {
       return null;
     }
     StringBuilder out = new StringBuilder();
     for (String line : content.split("\\R")) {
-      int marker = line.indexOf(FIX_MARKER);
+      int marker = firstMarker(line);
       // From the marker to the end of its line, not just the marker itself.
       // Deleting the six characters and leaving "I go -> I went" behind put the
       // raw correction into the reply, where the screen showed it and the voice

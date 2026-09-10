@@ -113,12 +113,64 @@ class ChatbotServiceTest {
 
         chatbotService.chat("hi");
 
-        // 360 of answer room plus the reasoning allowance; see REASONING_TOKEN_ALLOWANCE.
+        // 560 of answer room plus the reasoning allowance; see REASONING_TOKEN_ALLOWANCE.
+        // 560 since the card carries up to three corrections and the whole sentence; before
+        // that, 360:
         // Raised from 260 when the correction gained a note written in the learner's own
         // language: the FIX line is generated last, so a completion that runs out of room
         // drops the correction and nothing says so.
-        verify(aiCompletionProvider).chatCompletionWithUsage(anyList(), eq(false), eq(360 + 1600), any(),
+        verify(aiCompletionProvider).chatCompletionWithUsage(anyList(), eq(false), eq(560 + 1600), any(),
                 eq("llama-3.3-70b-versatile"));
+    }
+
+    /**
+     * A tester at B2 said a sentence with five mistakes and got a card that showed one.
+     * The card now carries as many as the learner's level holds, and the whole sentence.
+     */
+    @Test
+    void chatTurn_ShouldCarryTheCorrectionsThisLevelHoldsAndTheWholeSentence() {
+        when(aiCompletionProvider.chatCompletionWithUsage(anyList(), anyBoolean(), any(), any(), nullable(String.class)))
+                .thenReturn(AiCompletionProvider.CompletionResult.of(
+                        "Sure! Steamed milk is milk heated with steam.\n"
+                                + "[[FIX]] This is complicating more -> This is getting more complicated || n1\n"
+                                + "[[FIX]] what is steamed milk -> what steamed milk is || n2\n"
+                                + "[[FIX]] more simpler -> more simply || n3\n"
+                                + "[[SENTENCE]] This is getting more complicated. Explain what steamed milk is, more simply.",
+                        1, 1, 2));
+        String said = "This is complicating more. Explain what is steamed milk more simpler.";
+
+        ChatbotService.ChatTurn b1 = chatbotService.chatTurn(said, null, null, null,
+                LearningLanguageProfile.of("Turkish", "English", "Turkish", "B1", "Speaking"), null);
+
+        assertEquals(2, b1.corrections().size(), "a B1 card holds two");
+        assertEquals("This is getting more complicated", b1.correction().better());
+        assertEquals("what steamed milk is", b1.corrections().get(1).better());
+        assertEquals("This is getting more complicated. Explain what steamed milk is, more simply.",
+                b1.correctedSentence());
+        assertEquals("Sure! Steamed milk is milk heated with steam.", b1.ai().content(),
+                "neither the corrections nor the sentence may reach the reply, which is read aloud");
+
+        ChatbotService.ChatTurn a2 = chatbotService.chatTurn(said, null, null, null,
+                LearningLanguageProfile.of("Turkish", "English", "Turkish", "A2", "Speaking"), null);
+
+        assertEquals(1, a2.corrections().size(), "an A2 card holds one");
+        assertEquals("This is getting more complicated. Explain what steamed milk is, more simply.",
+                a2.correctedSentence(), "the sentence still fixes everything, at every level");
+    }
+
+    @Test
+    void chatTurn_ShouldDropAWholeSentenceThatChangesNothing() {
+        // Their own words handed back as "the right way to say it" would tell them they were
+        // wrong and show them nothing.
+        when(aiCompletionProvider.chatCompletionWithUsage(anyList(), anyBoolean(), any(), any(), nullable(String.class)))
+                .thenReturn(AiCompletionProvider.CompletionResult.of(
+                        "Nice!\n[[FIX]] I go -> I went\n[[SENTENCE]] I go home.", 1, 1, 2));
+
+        ChatbotService.ChatTurn turn = chatbotService.chatTurn("I go home", null, null, null,
+                LearningLanguageProfile.defaultProfile(), null);
+
+        assertEquals("I went", turn.correction().better());
+        assertNull(turn.correctedSentence());
     }
 
     @Test

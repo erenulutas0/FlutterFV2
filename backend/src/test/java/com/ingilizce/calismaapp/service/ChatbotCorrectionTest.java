@@ -55,14 +55,17 @@ class ChatbotCorrectionTest {
         @Test
         @DisplayName("even when the model repeats itself, taking the last word")
         void lastMarkerWins() {
-            // A model that corrects twice has replaced its own first answer. Taking the
-            // first would show the learner something the model went on to think better of.
-            String content = "Nice.\n[[FIX]] a -> b\n[[FIX]] I has -> I have";
+            // Several lines are several corrections now, one per mistake. The same words
+            // corrected twice are still the model revising itself, and the later answer
+            // stands -- which is what this test has always protected. (It used to pass two
+            // different phrases and expect the second; that is two corrections today.)
+            String content = "Nice.\n[[FIX]] I has -> I haves\n[[FIX]] I has -> I have";
 
             ChatbotService.Correction correction = ChatbotService.extractCorrection(content);
 
             assertNotNull(correction);
             assertEquals("I have", correction.better());
+            assertEquals(1, ChatbotService.extractCorrections(content).size());
             assertEquals("Nice.", ChatbotService.stripCorrection(content));
         }
 

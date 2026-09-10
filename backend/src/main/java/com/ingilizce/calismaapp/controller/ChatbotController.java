@@ -1747,6 +1747,23 @@ public class ChatbotController {
                     correction.put("note", note);
                 }
                 result.put("correction", correction);
+                // Every change the card lists, most important first -- the first is the one
+                // above, which is all an app before this reads -- and the learner's whole
+                // message corrected. Added keys, so an older app sees exactly what it did.
+                List<Map<String, Object>> corrections = new ArrayList<>();
+                for (ChatbotService.Correction each : turn.corrections()) {
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("said", each.said());
+                    item.put("better", each.better());
+                    if (each.note() != null && !each.note().isBlank()) {
+                        item.put("note", each.note());
+                    }
+                    corrections.add(item);
+                }
+                result.put("corrections", corrections);
+                if (turn.correctedSentence() != null) {
+                    result.put("correctedSentence", turn.correctedSentence());
+                }
             }
             result.put("timestamp", System.currentTimeMillis());
             return ResponseEntity.ok(result);

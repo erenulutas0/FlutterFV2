@@ -244,6 +244,39 @@ public class ChatbotControllerTest {
                 .andExpect(jsonPath("$.correction.note").doesNotExist());
     }
 
+    /**
+     * Every change and the whole sentence travel beside the one correction older apps read.
+     *
+     * <p>A tester at B2 had five mistakes in one sentence and a card that showed one. The card
+     * now leads with the sentence fixed and lists the changes under it; "correction" stays the
+     * most important of them, so an app from before this draws exactly the card it did.
+     */
+    @Test
+    void chatCarriesEveryChangeAndTheWholeSentence() throws Exception {
+        ChatbotService.Correction first =
+                new ChatbotService.Correction("complicating more", "getting more complicated", "n1");
+        when(chatbotService.chatTurn(anyString(), nullable(String.class), nullable(String.class),
+                anyLong(), any(LearningLanguageProfile.class), nullable(String.class),
+                nullable(String.class)))
+                .thenReturn(new ChatbotService.ChatTurn(
+                        ai("Sure!"),
+                        first,
+                        List.of(first, new ChatbotService.Correction("more simpler", "more simply")),
+                        "This is getting more complicated."));
+
+        mockMvc.perform(post("/api/chatbot/chat")
+                .header("X-User-Id", "1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"message\":\"This is complicating more\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.correction.better").value("getting more complicated"))
+                .andExpect(jsonPath("$.corrections.length()").value(2))
+                .andExpect(jsonPath("$.corrections[0].note").value("n1"))
+                .andExpect(jsonPath("$.corrections[1].better").value("more simply"))
+                .andExpect(jsonPath("$.corrections[1].note").doesNotExist())
+                .andExpect(jsonPath("$.correctedSentence").value("This is getting more complicated."));
+    }
+
     @Test
     void chatCarriesTheNoteWhenTheModelExplainedTheMistake() throws Exception {
         // The note is the half of the card a beginner can actually read: two English
