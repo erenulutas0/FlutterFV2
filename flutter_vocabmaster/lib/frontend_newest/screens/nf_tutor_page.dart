@@ -610,13 +610,14 @@ class _NfTutorPageState extends State<NfTutorPage> {
         // The correction hangs off what the LEARNER said, not off the reply.
         // It is about their sentence, and putting it under the tutor's answer
         // would leave them looking for which of their own lines it meant.
-        final TutorCorrection? fix = reply.correction;
+        final TutorCorrection? fix = reply.correction?.about(trimmed);
         // Checked against the sentence that was actually sent, not against
         // whatever turn happens to be last. The correction is drawn struck
         // through under "Say it like this", so an invented one shows the
         // learner words they never spoke and crosses them out -- worse than
         // showing no correction at all, which is the ordinary case anyway.
-        final bool corrected = fix != null && fix.isAbout(trimmed);
+        // about() applies that same test to every change and to the whole sentence.
+        final bool corrected = fix != null;
         if (corrected) {
           final int said =
               _turns.lastIndexWhere((_NfTurn turn) => !turn.fromTutor);
@@ -2002,6 +2003,14 @@ class _CorrectionNoteState extends State<_CorrectionNote> {
   /// learner never said into their deck; and when the span IS the line, where
   /// attaching it would show the same words twice and call one an example.
   String? _correctedSentence() {
+    // The model's own whole sentence when it sent one: it fixes everything in the line,
+    // where the span applied below can only fix the one mistake it names.
+    final String? whole = widget.correction.sentence;
+    if (whole != null &&
+        _NfTutorPageState._deckKey(whole) !=
+            _NfTutorPageState._deckKey(widget.correction.better)) {
+      return whole;
+    }
     final String said = widget.correction.said.trim();
     final String better = widget.correction.better.trim();
     final String line = widget.saidInFull.trim();
@@ -2104,48 +2113,117 @@ class _CorrectionNoteState extends State<_CorrectionNote> {
             ),
           ),
           const SizedBox(height: NfSpace.s6),
-          // Struck through, and muted. The corrected line is the one to read,
-          // so it is the one that looks like text; what they said is context
-          // for it rather than the point.
-          Text(
-            correction.said,
-            style: NfTokens.body(
-              size: NfFont.s125,
-              color: t.inkMuted,
-              decoration: TextDecoration.lineThrough,
-            ),
-          ),
-          const SizedBox(height: NfSpace.s4),
-          Text(
-            correction.better,
-            style: NfTokens.body(
-              size: NfFont.s135,
-              weight: NfTokens.bodyEmphasisWeight,
-              color: t.ink,
-            ),
-          ),
-          // Why it was wrong, in the learner's own language, when the model
-          // sent one. Quieter and smaller than the line above it, because the
-          // corrected sentence is the thing to take away and this is read
-          // once. Unlabelled on purpose: it arrives already written in the
-          // language the learner reads, so it is a sentence rather than a
-          // field, and a heading over it would be a word to translate for no
-          // gain. It wraps -- half a reason is not a shorter reason -- and
-          // when there is none it adds nothing, not an empty Text and the gap
-          // above it, which reads as a card that failed to finish drawing.
-          if (correction.note case final String why) ...<Widget>[
-            const SizedBox(height: NfSpace.s6),
+          if (correction.showsSentence) ...<Widget>[
+            // The learner's whole message, fixed. First, and set the way the corrected
+            // line always was, because it is now the thing to read: a tester at B2 had
+            // five mistakes in one sentence and a card that showed one, which told him
+            // the other four were fine.
             Text(
-              why,
+              correction.sentence!,
               style: NfTokens.body(
-                size: NfFont.s12,
-                color: t.inkMuted,
+                size: NfFont.s135,
+                weight: NfTokens.bodyEmphasisWeight,
+                color: t.ink,
               ),
             ),
+            for (final TutorCorrection change in correction.changes) ...<Widget>[
+              const SizedBox(height: NfSpace.s8),
+              _changeLine(t, change),
+            ],
+          ] else ...<Widget>[
+            // Struck through, and muted. The corrected line is the one to read,
+            // so it is the one that looks like text; what they said is context
+            // for it rather than the point.
+            Text(
+              correction.said,
+              style: NfTokens.body(
+                size: NfFont.s125,
+                color: t.inkMuted,
+                decoration: TextDecoration.lineThrough,
+              ),
+            ),
+            const SizedBox(height: NfSpace.s4),
+            Text(
+              correction.better,
+              style: NfTokens.body(
+                size: NfFont.s135,
+                weight: NfTokens.bodyEmphasisWeight,
+                color: t.ink,
+              ),
+            ),
+            // Why it was wrong, in the learner's own language, when the model
+            // sent one. Quieter and smaller than the line above it, because the
+            // corrected sentence is the thing to take away and this is read
+            // once. Unlabelled on purpose: it arrives already written in the
+            // language the learner reads, so it is a sentence rather than a
+            // field, and a heading over it would be a word to translate for no
+            // gain. It wraps -- half a reason is not a shorter reason -- and
+            // when there is none it adds nothing, not an empty Text and the gap
+            // above it, which reads as a card that failed to finish drawing.
+            if (correction.note case final String why) ...<Widget>[
+              const SizedBox(height: NfSpace.s6),
+              Text(
+                why,
+                style: NfTokens.body(
+                  size: NfFont.s12,
+                  color: t.inkMuted,
+                ),
+              ),
+            ],
+            for (final TutorCorrection change in correction.more) ...<Widget>[
+              const SizedBox(height: NfSpace.s8),
+              _changeLine(t, change),
+            ],
           ],
           _buildKeep(t),
         ],
       ),
+    );
+  }
+
+  /// One change on a card: what was said struck through, what replaces it, and why.
+  ///
+  /// On one line where the words allow, because on a card that leads with the whole
+  /// sentence each change is a footnote to it rather than a heading of its own.
+  Widget _changeLine(NfTokens t, TutorCorrection change) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Text.rich(
+          TextSpan(
+            children: <InlineSpan>[
+              TextSpan(
+                text: change.said,
+                style: NfTokens.body(
+                  size: NfFont.s125,
+                  color: t.inkMuted,
+                  decoration: TextDecoration.lineThrough,
+                ),
+              ),
+              TextSpan(
+                text: '  \u2192  ',
+                style: NfTokens.body(size: NfFont.s125, color: t.inkMuted),
+              ),
+              TextSpan(
+                text: change.better,
+                style: NfTokens.body(
+                  size: NfFont.s125,
+                  weight: NfTokens.bodyEmphasisWeight,
+                  color: t.ink,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (change.note case final String why) ...<Widget>[
+          const SizedBox(height: NfSpace.s4),
+          Text(
+            why,
+            style: NfTokens.body(size: NfFont.s12, color: t.inkMuted),
+          ),
+        ],
+      ],
     );
   }
 

@@ -1418,7 +1418,9 @@ class ApiService {
       if (decoded is Map) {
         return TutorReply(
           text: decoded['response']?.toString() ?? '',
-          correction: TutorCorrection.fromJson(decoded['correction']),
+          // Every change and the whole sentence when the server sends them, the
+          // single correction when it is older than that.
+          correction: TutorCorrection.fromResponse(decoded),
         );
       }
       return const TutorReply(text: '');

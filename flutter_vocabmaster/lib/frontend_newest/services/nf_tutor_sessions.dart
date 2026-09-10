@@ -31,19 +31,13 @@ class NfSavedTurn {
         'm': fromTutor,
         if (hasAudio) 'a': true,
         if (note != null) 'n': note,
-        if (correction != null)
-          'c': <String, String>{
-            'said': correction!.said,
-            'better': correction!.better,
-            // The line saying WHY, in the learner's own language. Written
-            // conditionally because the reader treats an absent note and an
-            // empty one differently, and a blank line under a correction reads
-            // on a phone as a card that failed to draw. Without this the note
-            // survived exactly as long as the app stayed open: reopening the
-            // conversation from history gave back the two English sentences
-            // and dropped the only part a beginner could read.
-            if (correction!.note != null) 'note': correction!.note!,
-          },
+        // Everything the card drew: the change, its note, the whole sentence and the
+        // other changes. Each key only when there is something in it -- the reader
+        // treats absent and empty differently, and a blank line under a correction reads
+        // on a phone as a card that failed to draw. The note once survived only as long
+        // as the app stayed open; the whole sentence, now the first thing the card shows,
+        // must not repeat that.
+        if (correction != null) 'c': correction!.toJson(),
       };
 
   /// Null for anything unreadable. A conversation that half-loads is worse
