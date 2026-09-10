@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -105,7 +106,24 @@ class TurkishSpellingTest {
         return out;
     }
 
+    /**
+     * Letters no Turkish word is written with. â, î and û are not here, because
+     * Turkish does write them.
+     */
+    private static final String FOREIGN = "äßáéèêëàñãõóòíìúùïôœæ";
+
     private static boolean looksTurkish(String s) {
+        // One of these settles it the other way: the string is in another language,
+        // whatever else it contains. ç, ö and ü alone cannot tell Turkish from French,
+        // German or Portuguese, and the chat prompt now carries a line in each; without
+        // this every French word in one would be held to Turkish vowel harmony. Measured
+        // before it went in: of the 211 literals scanned as Turkish, the only ones this
+        // drops are in another language.
+        for (char c : s.toLowerCase(Locale.ROOT).toCharArray()) {
+            if (FOREIGN.indexOf(c) >= 0) {
+                return false;
+            }
+        }
         for (char c : s.toCharArray()) {
             if (LOWER.indexOf(c) >= 0 || UPPER.indexOf(c) >= 0) {
                 return true;

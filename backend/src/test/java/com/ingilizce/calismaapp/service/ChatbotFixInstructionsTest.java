@@ -156,6 +156,26 @@ class ChatbotFixInstructionsTest {
     }
 
     @Test
+    @DisplayName("the note's language is stated in that language, right before the examples")
+    void theLanguageIsAnchoredInItself() throws Exception {
+        // The rule about reasons is a paragraph of English, and on a device the model wrote
+        // the reason half of a Turkish note in English. Three English sentences asking for
+        // Turkish had already been walked past; the one line it reads in Turkish just
+        // before writing Turkish is what a demonstration adds that an instruction cannot.
+        assertThat(fixInstructions(learner("Turkish", "B2"))).contains("Notun tamamı Türkçe");
+        assertThat(fixInstructions(learner("Spanish", "B1"))).contains("Toda la nota va en español");
+
+        for (String language : new String[] {
+                "Turkish", "German", "French", "Italian", "Portuguese", "Spanish"}) {
+            assertThat(fixInstructions(learner(language, "B1")))
+                    .as("anchor for %s", language)
+                    .doesNotContain("The whole note is in English");
+        }
+        assertThat(fixInstructions(learner("English", "B1")))
+                .contains("The whole note is in English");
+    }
+
+    @Test
     @DisplayName("a note gives a reason, never a label")
     void aNoteIsNotALabel() throws Exception {
         // From a tester, about the card for "I had like": the note read "\"had like\" is

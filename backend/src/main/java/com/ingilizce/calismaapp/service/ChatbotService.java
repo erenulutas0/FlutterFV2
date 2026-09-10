@@ -11,6 +11,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Objects;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 @Service
 public class ChatbotService {
@@ -279,6 +283,33 @@ public class ChatbotService {
     };
   }
 
+  /**
+   * One line, in the note's own language, saying the whole note is written in it.
+   *
+   * <p>The rule about reasons is a paragraph of English, and on a device the model wrote
+   * the reason half of a Turkish note in English: "had like" yanlış, "would like" is the
+   * correct way to express a wish. Three English sentences asking for Turkish had already
+   * been walked past. This is the demonstration those sentences lacked, placed where the
+   * drift happened: the one line the model reads in Turkish just before it writes Turkish.
+   * English is the fallback because an English learner's note IS English.
+   *
+   * <p>The German and French lines each carry a letter Turkish never writes -- the ä of
+   * "Erklärung", the é of "écrite". TurkishSpellingTest reads ç, ö and ü as Turkish, and
+   * without one of those letters it would hold every French word to Turkish vowel harmony.
+   */
+  private static String languageAnchor(String nativeLanguage) {
+    return switch (nativeLanguage) {
+      case "Turkish" -> "Notun tamamı Türkçe yazılır, sebebi de; İngilizce yalnızca tırnak içindeki kelimelerdir.";
+      case "German" -> "Die ganze Notiz ist auf Deutsch, auch die Erklärung; Englisch steht nur in Anführungszeichen.";
+      case "French" -> "Toute la note est écrite en français, explication comprise ; l'anglais n'apparaît qu'entre guillemets.";
+      case "Italian" -> "Tutta la nota è in italiano, motivazione compresa; l'inglese compare solo tra virgolette.";
+      case "Portuguese" -> "A nota inteira é em português, inclusive o motivo; o inglês aparece só entre aspas.";
+      case "Spanish" -> "Toda la nota va en español, incluida la razón; el inglés solo aparece entre comillas.";
+      case "Indonesian" -> "Seluruh catatan ditulis dalam bahasa Indonesia, termasuk alasannya; bahasa Inggris hanya di dalam tanda kutip.";
+      default -> "The whole note is in English, the reason included.";
+    };
+  }
+
   private static String fixInstructions(LearningLanguageProfile profile) {
     String nativeLanguage = profile.sourceLanguage();
     String level = profile.englishLevel();
@@ -317,6 +348,7 @@ HOW TO OFFER A CORRECTION:
   what the corrected word already means, what the wrong one would mean to a native
   speaker, or what it is being confused with. Use everyday words, with
   no grammar term the learner would have to look up.
+- %s
 - Worked example, for a learner who said "I am boring" and meant that they were bored:
 %s I am boring %s I'm bored %s %s
 - Worked example, for words that mean nothing as they stand -- a learner who said
@@ -328,6 +360,7 @@ HOW TO OFFER A CORRECTION:
 """.formatted(
         FIX_MARKER, FIX_SEPARATOR, FIX_NOTE_SEPARATOR, nativeLanguage,
         FIX_NOTE_SEPARATOR, nativeLanguage, nativeLanguage,
+        languageAnchor(nativeLanguage),
         FIX_MARKER, FIX_SEPARATOR, FIX_NOTE_SEPARATOR, exampleNote(nativeLanguage),
         FIX_MARKER, FIX_SEPARATOR, FIX_NOTE_SEPARATOR, exampleFormNote(nativeLanguage),
         notePolicy);
@@ -369,7 +402,8 @@ HOW TO OFFER A CORRECTION:
     AiCallResult result = callGroqText(
         systemPrompt, history, message, 360 + REASONING_TOKEN_ALLOWANCE, "speaking-chat");
 
-    Correction correction = extractCorrection(result.content());
+    Correction correction =
+        withoutStrayNote(extractCorrection(result.content()), profile.sourceLanguage());
     String reply = stripCorrection(result.content());
 
     // The cleaned reply, not the raw one. Storing the marker would feed it back as an
@@ -384,6 +418,61 @@ HOW TO OFFER A CORRECTION:
     AiCallResult cleaned = new AiCallResult(
         reply, result.totalTokens(), result.promptTokens(), result.completionTokens());
     return new ChatTurn(cleaned, correction);
+  }
+
+  /**
+   * English function words, for noticing a note that has slipped into English.
+   *
+   * <p>Chosen to collide with as little as possible in the six other languages a note is
+   * written in: "a", "an", "in", "on", "as", "no", "do" and "was" are words in at least one
+   * of them and are left out. Three distinct hits outside quotation marks is the line. A
+   * Turkish note has none of these; a German one has at most a stray "not".
+   */
+  private static final Set<String> ENGLISH_FUNCTION_WORDS = Set.of(
+      "is", "are", "be", "the", "to", "of", "for", "you", "it", "this", "that",
+      "not", "with", "and", "use", "used", "way", "means", "correct", "instead",
+      "when", "would", "should", "because");
+
+  /** A span between double quotation marks of any regional shape. */
+  private static final Pattern QUOTED_SPAN = Pattern.compile("[\"“”„«»][^\"“”„«»]*[\"“”„«»]");
+
+  /**
+   * Whether a note meant for a non-English learner has drifted into English.
+   *
+   * <p>The quoted English -- "had like", "would like" -- is supposed to be there. The
+   * prose around it is not: on a device a Turkish learner got "had like" yanlış, "would
+   * like" is the correct way to express a wish, which is half a sentence they cannot read.
+   * Only ever a safety net under the prompt's own anchor line, which is the real fix.
+   */
+  static boolean noteStraysFromLanguage(String note, String nativeLanguage) {
+    if (note == null || note.isBlank() || nativeLanguage == null
+        || "English".equalsIgnoreCase(nativeLanguage)) {
+      return false;
+    }
+    String outsideQuotes = QUOTED_SPAN.matcher(note).replaceAll(" ");
+    Set<String> hits = new HashSet<>();
+    for (String token : outsideQuotes.toLowerCase(Locale.ROOT).split("[^\\p{L}']+")) {
+      if (ENGLISH_FUNCTION_WORDS.contains(token)) {
+        hits.add(token);
+      }
+    }
+    return hits.size() >= 3;
+  }
+
+  /**
+   * The correction without a note the learner cannot read; the correction itself stays.
+   *
+   * <p>Dropped alone, the way an overlong note is: the fix is the part the learner came
+   * for, and a note in the wrong language must never cost them it.
+   */
+  static Correction withoutStrayNote(Correction correction, String nativeLanguage) {
+    if (correction == null || correction.note() == null
+        || !noteStraysFromLanguage(correction.note(), nativeLanguage)) {
+      return correction;
+    }
+    logger.warn("Dropping a correction note that strayed out of {} for a {} learner: '{}'",
+        nativeLanguage, nativeLanguage, correction.note());
+    return new Correction(correction.said(), correction.better(), null);
   }
 
   /** The correction the model appended, or null if it did not append a usable one. */
